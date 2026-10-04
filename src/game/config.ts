@@ -93,8 +93,8 @@ export const GAME = {
   toothbrushDwellMaxMs: 3000,
   /** Miss retreat animation length for the bonus item. */
   toothbrushRetreatMs: 220,
-  /** Full sweep travel duration (timer paused; no new germ spawns). 2.2s feel. */
-  toothbrushSweepMs: 2200,
+  /** Full sweep travel duration (timer paused; no new germ spawns). 3s feel. */
+  toothbrushSweepMs: 3000,
   /** Fraction of sweep before first sequential clear / after last clear. */
   toothbrushSweepClearStart: 0.14,
   toothbrushSweepClearEnd: 0.86,
