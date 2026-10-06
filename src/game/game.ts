@@ -8,7 +8,12 @@ import {
   whenMouthBackgroundReady,
 } from './mouth'
 import { retryCriticalAssets, whenCriticalAssetsReady } from './preload'
-import { logSheetsEvent } from './sheetsLog'
+import {
+  fetchSheetsTop3,
+  logSheetsEvent,
+  submitSheetsScore,
+  type Top3Scores,
+} from './sheetsLog'
 import { ToothbrushController } from './toothbrush'
 
 type Screen = 'start' | 'playing' | 'result'
@@ -323,7 +328,19 @@ export class CavityTapGame {
       this.startRound()
     })
 
-    void whenCriticalAssetsReady().then(enableStart).catch(showLoadFailure)
+    void whenCriticalAssetsReady()
+      .then(() => {
+        enableStart()
+        // Dev helper: `?result=1` jumps to the result panel for TOP3/tip proof.
+        if (
+          import.meta.env.DEV &&
+          new URLSearchParams(location.search).has('result')
+        ) {
+          this.score = 12
+          this.endRound()
+        }
+      })
+      .catch(showLoadFailure)
 
     requestAnimationFrame(() => {
       this.fitStartEyebrow()
@@ -950,6 +967,12 @@ export class CavityTapGame {
       <div class="panel panel--result">
         <h2 class="panel__title">🎉 30초 미션 완료!</h2>
         <p class="panel__score">충치균 <span>${this.score}</span>마리 잡기 성공!</p>
+        <div class="panel__top3" data-top3 hidden>
+          <p class="panel__top3-title">도전! 기록 TOP 3</p>
+          <p class="panel__top3-line" data-top3-rank="1">1위: —마리</p>
+          <p class="panel__top3-line" data-top3-rank="2">2위: —마리</p>
+          <p class="panel__top3-line" data-top3-rank="3">3위: —마리</p>
+        </div>
         <p class="panel__tip">진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
         <button type="button" class="btn btn--pulse" data-action="retry">다시 도전하기</button>
       </div>
@@ -960,5 +983,48 @@ export class CavityTapGame {
       logSheetsEvent('retry')
       this.startRound()
     })
+    void this.populateResultTop3(this.score)
+  }
+
+  /**
+   * Load anonymous TOP3 for the result panel. Never blocks retry —
+   * hide the block on failure / empty webhook.
+   */
+  private async populateResultTop3(score: number): Promise<void> {
+    if (this.screen !== 'result') return
+    const block = this.overlay.querySelector<HTMLElement>('[data-top3]')
+    if (!block) return
+
+    block.hidden = false
+    block.classList.add('panel__top3--loading')
+    block.setAttribute('aria-busy', 'true')
+
+    let top3: Top3Scores | null = null
+    try {
+      top3 = await submitSheetsScore(score)
+      if (!top3) top3 = await fetchSheetsTop3()
+    } catch {
+      top3 = null
+    }
+
+    if (this.screen !== 'result') return
+    const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
+    if (!live) return
+
+    live.classList.remove('panel__top3--loading')
+    live.removeAttribute('aria-busy')
+
+    if (!top3 || (top3[0] <= 0 && top3[1] <= 0 && top3[2] <= 0)) {
+      live.hidden = true
+      return
+    }
+
+    live.hidden = false
+    const labels = ['1위', '2위', '3위'] as const
+    for (let i = 0; i < 3; i++) {
+      const line = live.querySelector(`[data-top3-rank="${i + 1}"]`)
+      if (!line) continue
+      line.textContent = `${labels[i]}: ${top3[i]!}마리`
+    }
   }
 }
