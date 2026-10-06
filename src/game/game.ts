@@ -1012,9 +1012,10 @@ export class CavityTapGame {
 
   /**
    * Background Sheets sync only. Optimistic TOP3 is already in the result HTML.
-   * On successful fetch, server values always win (including [0,0,0]).
-   * Race: merge current score into *fetched* zeros once — never rehydrate
-   * stale pre-reset cache. Fetch failure keeps the optimistic paint.
+   * On successful fetch: merge this round's score into the *fetched* list so a
+   * write/read race cannot restore stale 3rd place (e.g. 62→still 60).
+   * Server zeros after a sheet clear still win, then current score fills in.
+   * Fetch failure keeps the optimistic paint.
    */
   private async syncResultTop3(score: number): Promise<void> {
     let server: Top3Scores | null = null
@@ -1030,11 +1031,10 @@ export class CavityTapGame {
 
     if (!server) return // keep optimistic paint
 
-    // Server truth wins — including [0,0,0] after B5–B7 clear.
-    let display: Top3Scores = server
-    if (!this.top3HasScores(server) && score > 0) {
-      display = mergeOptimisticTop3(score, server)
-    }
+    // Always coalesce current score into fetched TOP3 (not only when all zeros).
+    // Race example: sheet still [80,70,60] for ~0.5s → keep 62 as 3rd via merge.
+    const display =
+      score > 0 ? mergeOptimisticTop3(score, server) : server
     setCachedTop3(display)
     if (this.top3HasScores(display)) {
       this.renderTop3Lines(live, display)
