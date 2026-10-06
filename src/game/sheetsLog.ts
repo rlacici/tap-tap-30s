@@ -1,5 +1,8 @@
 export type SheetsCounterType = 'complete' | 'retry'
 
+/** Anonymous TOP3 scores only — no names / PII. */
+export type Top3Scores = [number, number, number]
+
 let missingUrlLogged = false
 
 function webhookUrl(): string | undefined {
@@ -9,25 +12,7 @@ function webhookUrl(): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined
 }
 
-/**
- * Fire-and-forget counter bump via Google Apps Script web app.
- * Body: { "type": "complete" } | { "type": "retry" }
- * No-ops quietly when VITE_SHEETS_WEBHOOK_URL is unset.
- */
-export function logSheetsEvent(type: SheetsCounterType): void {
-  const url = webhookUrl()
-  if (!url) {
-    if (!missingUrlLogged) {
-      missingUrlLogged = true
-      console.info(
-        '[sheets] VITE_SHEETS_WEBHOOK_URL unset — counter logging disabled',
-      )
-    }
-    return
-  }
-
-  const body = JSON.stringify({ type })
-
+function postFireAndForget(body: string, url: string): void {
   try {
     // text/plain avoids CORS preflight; Apps Script still parses JSON contents.
     if (typeof navigator.sendBeacon === 'function') {
@@ -48,5 +33,118 @@ export function logSheetsEvent(type: SheetsCounterType): void {
     })
   } catch {
     // Swallow — logging must never break the game.
+  }
+}
+
+/**
+ * Fire-and-forget counter bump via Google Apps Script web app.
+ * Body: { "type": "complete" } | { "type": "retry" }
+ * No-ops quietly when VITE_SHEETS_WEBHOOK_URL is unset.
+ */
+export function logSheetsEvent(type: SheetsCounterType): void {
+  const url = webhookUrl()
+  if (!url) {
+    if (!missingUrlLogged) {
+      missingUrlLogged = true
+      console.info(
+        '[sheets] VITE_SHEETS_WEBHOOK_URL unset — counter logging disabled',
+      )
+    }
+    return
+  }
+
+  postFireAndForget(JSON.stringify({ type }), url)
+}
+
+function parseTop3(data: unknown): Top3Scores | null {
+  if (!data || typeof data !== 'object') return null
+  const raw = (data as { top3?: unknown }).top3
+  if (!Array.isArray(raw) || raw.length < 3) return null
+  const nums = raw.slice(0, 3).map((v) => {
+    const n = Number(v)
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
+  })
+  return [nums[0]!, nums[1]!, nums[2]!]
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * Submit anonymous score for TOP3 (does not bump 완료횟수 — caller logs complete).
+ * Prefer cors POST so the response can include updated top3; if that fails,
+ * still fire-and-forget the score then fetch TOP3 via GET.
+ */
+export async function submitSheetsScore(score: number): Promise<Top3Scores | null> {
+  const url = webhookUrl()
+  if (!url) return null
+
+  const value = Math.max(0, Math.floor(Number(score) || 0))
+  const body = JSON.stringify({ type: 'score', value })
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      keepalive: true,
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body,
+    })
+    if (res.ok) {
+      const data: unknown = await res.json()
+      const top3 = parseTop3(data)
+      if (top3) return top3
+    }
+  } catch {
+    // CORS / network — keep going so the score is not lost.
+  }
+
+  // Ensure the sheet still receives the score even when we cannot read JSON.
+  postFireAndForget(body, url)
+  await delay(350)
+  return fetchSheetsTop3()
+}
+
+/**
+ * Fetch anonymous TOP3 [s1,s2,s3]. GET ?type=top3 (fallback POST { type: 'top3' }).
+ * Returns null on fail / unset URL — UI should hide the block.
+ */
+export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
+  const url = webhookUrl()
+  if (!url) return null
+
+  const getUrl = `${url}${url.includes('?') ? '&' : '?'}type=top3`
+
+  try {
+    const res = await fetch(getUrl, {
+      method: 'GET',
+      mode: 'cors',
+      credentials: 'omit',
+    })
+    if (res.ok) {
+      const data: unknown = await res.json()
+      const top3 = parseTop3(data)
+      if (top3) return top3
+    }
+  } catch {
+    // try POST fallback
+  }
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      keepalive: true,
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body: JSON.stringify({ type: 'top3' }),
+    })
+    if (!res.ok) return null
+    const data: unknown = await res.json()
+    return parseTop3(data)
+  } catch {
+    return null
   }
 }
