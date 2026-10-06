@@ -110,6 +110,7 @@ export function setCachedTop3(top3: Top3Scores): void {
 /**
  * Insert the just-finished score into a cached TOP3 (desc, keep 3).
  * If no cache: [score, 0, 0] when score > 0, else [0, 0, 0].
+ * Example: merge(62, [80,70,60]) → [80,70,62] (62 replaces 3rd).
  */
 export function mergeOptimisticTop3(
   score: number,
@@ -128,14 +129,20 @@ export function mergeOptimisticTop3(
   return [merged[0]!, merged[1]!, merged[2]!]
 }
 
+function top3Equals(a: Top3Scores, b: Top3Scores): boolean {
+  return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
+}
+
 /**
  * Submit anonymous score for TOP3 (does not bump 완료횟수 — caller logs complete).
  * Sends the score **exactly once** (no-cors / beacon), then GETs TOP3 for display.
  * (Earlier cors+beacon double-post could fill 1~3위 with the same score.)
  *
  * Does **not** gate the result UI — caller paints optimistic TOP3 first, then
- * awaits this in the background. Write/read race (empty fetch after score) is
- * handled by merging the current score into fetched zeros in the game layer.
+ * awaits this in the background. If GET still shows the pre-write list
+ * (e.g. 62 should replace 60 but fetch returns [80,70,60]), retries once.
+ * Caller must still merge the current score into the fetched list for display
+ * so a remaining race cannot wipe the optimistic 3rd-place update.
  */
 export async function submitSheetsScore(score: number): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -149,7 +156,17 @@ export async function submitSheetsScore(score: number): Promise<Top3Scores | nul
   postFireAndForget(body, url)
   // Brief pause so the score write can land before TOP3 read (UI already painted).
   await delay(450)
-  return fetchSheetsTop3()
+  let top3 = await fetchSheetsTop3()
+  if (top3 && value > 0) {
+    const withScore = mergeOptimisticTop3(value, top3)
+    // Write/read race: score should enter TOP3 (beat 3rd / fill slot) but
+    // GET still has the old list — wait briefly and refetch once.
+    if (!top3Equals(withScore, top3)) {
+      await delay(400)
+      top3 = (await fetchSheetsTop3()) ?? top3
+    }
+  }
+  return top3
 }
 
 /**
