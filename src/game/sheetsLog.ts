@@ -133,16 +133,28 @@ function top3Equals(a: Top3Scores, b: Top3Scores): boolean {
   return a[0] === b[0] && a[1] === b[1] && a[2] === b[2]
 }
 
+export type FetchTop3Options = {
+  /**
+   * When false, do not write sessionStorage/memory (avoids poisoning the
+   * optimistic cache with a pre-write GET during the beacon fallback).
+   * Default true — successful reads are server truth, including [0,0,0].
+   */
+  persist?: boolean
+}
+
 /**
  * Submit anonymous score for TOP3 (does not bump 완료횟수 — caller logs complete).
- * Sends the score **exactly once** (no-cors / beacon), then GETs TOP3 for display.
- * (Earlier cors+beacon double-post could fill 1~3위 with the same score.)
  *
- * Does **not** gate the result UI — caller paints optimistic TOP3 first, then
- * awaits this in the background. If GET still shows the pre-write list
- * (e.g. 62 should replace 60 but fetch returns [80,70,60]), retries once.
- * Caller must still merge the current score into the fetched list for display
- * so a remaining race cannot wipe the optimistic 3rd-place update.
+ * **Primary:** one cors `POST { type:score }` and use the JSON `top3` from that
+ * same response. Apps Script applies the score under LockService and returns the
+ * updated board — no separate GET, so no write/read race (the old beacon→GET
+ * path could still paint [80,70,60] after a 62 write for hundreds of ms).
+ *
+ * **Do not** also sendBeacon on the cors success path (that double-inserted the
+ * same score into 1~3위). Beacon+GET is fallback only when cors fails entirely.
+ *
+ * Does **not** gate the result UI — caller paints optimistic TOP3 first.
+ * Caller should still merge the current score into a fallback fetch for display.
  */
 export async function submitSheetsScore(score: number): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -151,33 +163,59 @@ export async function submitSheetsScore(score: number): Promise<Top3Scores | nul
   const value = Math.max(0, Math.floor(Number(score) || 0))
   const body = JSON.stringify({ type: 'score', value })
 
-  // Single write only — do not also cors-POST (GAS redirects made that path
-  // look like a failure and triggered a second write).
+  // Primary: awaitable cors POST. Browser fetch follows the GAS redirect and
+  // returns { ok, type:'score', top3 } — board AFTER this write under the lock.
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      keepalive: true,
+      headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+      body,
+    })
+    if (res.ok) {
+      const data: unknown = await res.json()
+      const top3 = parseTop3(data)
+      if (top3) {
+        setCachedTop3(top3)
+        return top3
+      }
+      // Request likely applied; read board without a second score write.
+      return await fetchSheetsTop3()
+    }
+  } catch {
+    // Network / CORS failure — fall through to beacon + GET.
+  }
+
+  // Fallback: single fire-and-forget write, then poll GET until the score is
+  // visible on the board (or attempts run out). Do not persist mid-poll fetches.
   postFireAndForget(body, url)
-  // Brief pause so the score write can land before TOP3 read (UI already painted).
-  await delay(450)
-  let top3 = await fetchSheetsTop3()
-  if (top3 && value > 0) {
-    const withScore = mergeOptimisticTop3(value, top3)
-    // Write/read race: score should enter TOP3 (beat 3rd / fill slot) but
-    // GET still has the old list — wait briefly and refetch once.
-    if (!top3Equals(withScore, top3)) {
-      await delay(400)
-      top3 = (await fetchSheetsTop3()) ?? top3
+  let top3: Top3Scores | null = null
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await delay(attempt === 0 ? 500 : 400)
+    const fetched = await fetchSheetsTop3({ persist: false })
+    if (!fetched) continue
+    top3 = fetched
+    if (value <= 0 || top3Equals(mergeOptimisticTop3(value, fetched), fetched)) {
+      break
     }
   }
+  if (top3) setCachedTop3(top3)
   return top3
 }
 
 /**
  * Fetch anonymous TOP3 [s1,s2,s3]. GET ?type=top3 (fallback POST { type: 'top3' }).
- * On success, **always** replaces the session cache — including [0,0,0] after a
- * sheet clear — so stale optimistic values cannot win over server truth.
- * Returns null on fail / unset URL.
+ * On success with persist (default), **always** replaces the session cache —
+ * including [0,0,0] after a sheet clear — so stale optimistic values cannot win
+ * over server truth. Returns null on fail / unset URL.
  */
-export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
+export async function fetchSheetsTop3(
+  opts?: FetchTop3Options,
+): Promise<Top3Scores | null> {
   const url = webhookUrl()
   if (!url) return null
+  const persist = opts?.persist !== false
 
   const getUrl = `${url}${url.includes('?') ? '&' : '?'}type=top3`
 
@@ -192,7 +230,7 @@ export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
       const top3 = parseTop3(data)
       if (top3) {
         // Server truth wins — zeros clear old 67/64 from sessionStorage/memory.
-        setCachedTop3(top3)
+        if (persist) setCachedTop3(top3)
         return top3
       }
     }
@@ -211,7 +249,7 @@ export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
     if (!res.ok) return null
     const data: unknown = await res.json()
     const top3 = parseTop3(data)
-    if (top3) setCachedTop3(top3)
+    if (top3 && persist) setCachedTop3(top3)
     return top3
   } catch {
     return null
