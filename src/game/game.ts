@@ -77,6 +77,8 @@ export class CavityTapGame {
   /** True while document is hidden during an active round (timer/spawner paused). */
   private backgroundPaused = false
   private screen: Screen = 'start'
+  /** Bumps each result screen so a late prior-round TOP3 sync cannot overwrite UI. */
+  private resultSyncGen = 0
   private onResize = (): void => {
     layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
     this.fitHudBrand()
@@ -1041,7 +1043,8 @@ export class CavityTapGame {
       this.startRound()
     })
     // Fire-and-forget: never blocks result paint or retry.
-    void this.syncResultTop3(score)
+    const syncGen = ++this.resultSyncGen
+    void this.syncResultTop3(score, syncGen)
   }
 
   private top3HasScores(top3: Top3Scores): boolean {
@@ -1059,12 +1062,11 @@ export class CavityTapGame {
 
   /**
    * Background Sheets sync only. Optimistic TOP3 is already in the result HTML.
-   * On successful fetch: merge this round's score into the *fetched* list so a
-   * write/read race cannot restore stale 3rd place (e.g. 62→still 60).
-   * Server zeros after a sheet clear still win, then current score fills in.
-   * Fetch failure keeps the optimistic paint.
+   * Primary submit path returns LockService-updated top3 from the score POST.
+   * Fallback GET still merges this round's score so a write/read race cannot
+   * restore stale 3rd place. Ignores stale completions from a prior result.
    */
-  private async syncResultTop3(score: number): Promise<void> {
+  private async syncResultTop3(score: number, syncGen: number): Promise<void> {
     let server: Top3Scores | null = null
     try {
       server = await submitSheetsScore(score)
@@ -1072,14 +1074,15 @@ export class CavityTapGame {
       server = null
     }
 
-    if (this.screen !== 'result') return
+    // Drop late sync from a previous result (fast retry) — do not overwrite UI/cache.
+    if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
     const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
     if (!live) return
 
     if (!server) return // keep optimistic paint
 
-    // Always coalesce current score into fetched TOP3 (not only when all zeros).
-    // Race example: sheet still [80,70,60] for ~0.5s → keep 62 as 3rd via merge.
+    // Coalesce current score (no-op when POST already returned post-write top3;
+    // still needed for beacon+GET fallback that may lag the write).
     const display =
       score > 0 ? mergeOptimisticTop3(score, server) : server
     setCachedTop3(display)
