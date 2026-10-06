@@ -964,16 +964,24 @@ export class CavityTapGame {
     this.stopSpawner()
     this.hideAllGerms()
     logSheetsEvent('complete')
+
+    // Same-frame optimistic TOP3: numbers in the first result HTML paint.
+    // Do not await Sheets — background sync updates later (server may flash).
+    const score = this.score
+    const optimistic = mergeOptimisticTop3(score, getCachedTop3())
+    const showTop3 = this.top3HasScores(optimistic)
+    if (showTop3) setCachedTop3(optimistic)
+
     this.overlay.hidden = false
     this.overlay.innerHTML = `
       <div class="panel panel--result">
         <h2 class="panel__title">🎉 30초 미션 완료!</h2>
-        <p class="panel__score">충치균 <span>${this.score}</span>마리 잡기 성공!</p>
-        <div class="panel__top3" data-top3 hidden>
+        <p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>
+        <div class="panel__top3" data-top3${showTop3 ? '' : ' hidden'}>
           <p class="panel__top3-title">👑 도전! 기록 TOP 3</p>
-          <p class="panel__top3-line" data-top3-rank="1">1위: —마리</p>
-          <p class="panel__top3-line" data-top3-rank="2">2위: —마리</p>
-          <p class="panel__top3-line" data-top3-rank="3">3위: —마리</p>
+          <p class="panel__top3-line" data-top3-rank="1">1위: ${optimistic[0]}마리</p>
+          <p class="panel__top3-line" data-top3-rank="2">2위: ${optimistic[1]}마리</p>
+          <p class="panel__top3-line" data-top3-rank="3">3위: ${optimistic[2]}마리</p>
         </div>
         <p class="panel__tip">진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
         <button type="button" class="btn btn--pulse" data-action="retry">다시 도전하기</button>
@@ -985,7 +993,8 @@ export class CavityTapGame {
       logSheetsEvent('retry')
       this.startRound()
     })
-    void this.populateResultTop3(this.score)
+    // Fire-and-forget: never blocks result paint or retry.
+    void this.syncResultTop3(score)
   }
 
   private top3HasScores(top3: Top3Scores): boolean {
@@ -1002,34 +1011,14 @@ export class CavityTapGame {
   }
 
   /**
-   * Optimistic TOP3 on the result panel: merge this score into the cached
-   * list and paint immediately, then sync Sheets in the background.
-   * After a **successful** fetch, server values always win (including [0,0,0]
-   * after a sheet clear) — never keep stale pre-reset cache numbers.
-   * Never blocks retry. Single-write score submit (no double-post).
+   * Background Sheets sync only. Optimistic TOP3 is already in the result HTML.
+   * On successful fetch, server values always win (including [0,0,0]).
+   * Race: merge current score into *fetched* zeros once — never rehydrate
+   * stale pre-reset cache. Fetch failure keeps the optimistic paint.
    */
-  private async populateResultTop3(score: number): Promise<void> {
-    if (this.screen !== 'result') return
-    const block = this.overlay.querySelector<HTMLElement>('[data-top3]')
-    if (!block) return
-
-    const optimistic = mergeOptimisticTop3(score, getCachedTop3())
-    // Skip long loading — show optimistic TOP3 right away when useful.
-    block.classList.remove('panel__top3--loading')
-    block.removeAttribute('aria-busy')
-    if (this.top3HasScores(optimistic)) {
-      // Seed cache so a fast retry still merges against this round's score.
-      // Overwritten when fetch succeeds (including all zeros).
-      setCachedTop3(optimistic)
-      this.renderTop3Lines(block, optimistic)
-      block.hidden = false
-    } else {
-      block.hidden = true
-    }
-
+  private async syncResultTop3(score: number): Promise<void> {
     let server: Top3Scores | null = null
     try {
-      // Background: one score write + fetch. Keep optimistic only if this fails.
       server = await submitSheetsScore(score)
     } catch {
       server = null
@@ -1039,26 +1028,18 @@ export class CavityTapGame {
     const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
     if (!live) return
 
-    if (server) {
-      // Server truth wins — including [0,0,0] after B5–B7 clear.
-      // Race: write may not have landed yet → merge current score into
-      // *fetched* zeros once ([score,0,0]), never rehydrate old cache.
-      let display: Top3Scores = server
-      if (!this.top3HasScores(server) && score > 0) {
-        display = mergeOptimisticTop3(score, server)
-      }
-      setCachedTop3(display)
-      if (this.top3HasScores(display)) {
-        this.renderTop3Lines(live, display)
-        live.hidden = false
-      } else {
-        live.hidden = true
-      }
-      return
-    }
+    if (!server) return // keep optimistic paint
 
-    // Fetch failed — keep optimistic display (already painted).
-    if (!this.top3HasScores(optimistic)) {
+    // Server truth wins — including [0,0,0] after B5–B7 clear.
+    let display: Top3Scores = server
+    if (!this.top3HasScores(server) && score > 0) {
+      display = mergeOptimisticTop3(score, server)
+    }
+    setCachedTop3(display)
+    if (this.top3HasScores(display)) {
+      this.renderTop3Lines(live, display)
+      live.hidden = false
+    } else {
       live.hidden = true
     }
   }
