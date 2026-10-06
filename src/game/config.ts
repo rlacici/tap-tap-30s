@@ -28,7 +28,10 @@ import { TOOTH_ANCHORS, type ToothKind } from './teethLayout'
  * - toothbrushSpawnGapSec           min seconds between planned spawns
  * - toothbrushDwellMin/MaxMs        idle time before bonus auto-retreat
  * - toothbrushRetreatMs             bonus miss retreat length
- * - toothbrushSweepMs               full AOE sweep duration (timer paused; 2.2s)
+ * - toothbrushSweepMs               full AOE sweep duration (timer paused; 4s)
+ * - toothbrushEnsureGerms           target free/active germs before bonus spawn (~5)
+ * - toothbrushEnsureWaitMs          max prepare wait before best-effort bonus spawn
+ * - toothbrushEnsureTopUpMin/Max    germs per prepare top-up tick (avoid flash-spawn)
  * - toothbrushSweepClearStart/End   sequential clear window within the sweep
  * - toothbrushSizeVw / SweepWidthPct  pickable size vs sweeping brush size
  * - toothbrushSweepCatch*           stronger pop FX only for sweep clears
@@ -45,7 +48,7 @@ export const GAME = {
   /** @deprecated use catchPlusOneMs — kept as alias for clarity in older notes. */
   floatScoreMs: 800,
 
-  /** Max concurrent germs on screen. */
+  /** Max concurrent germs on screen (normal WAM). */
   concurrentGerms: 4,
   /** Min/max time a germ stays idle before auto-despawn (miss). */
   dwellMinMs: 1000,
@@ -95,6 +98,16 @@ export const GAME = {
   toothbrushRetreatMs: 220,
   /** Full sweep travel duration (timer paused; no new germ spawns). 4s feel. */
   toothbrushSweepMs: 4000,
+  /**
+   * Before a planned toothbrush spawn: briefly allow up to this many active
+   * germs so the sweep has a fuller board. Normal WAM stays at concurrentGerms.
+   */
+  toothbrushEnsureGerms: 5,
+  /** Max prepare wait (ms) before spawning the brush with best-effort germ count. */
+  toothbrushEnsureWaitMs: 1100,
+  /** Small top-up batches during prepare (avoid flashing all missing germs at once). */
+  toothbrushEnsureTopUpMin: 1,
+  toothbrushEnsureTopUpMax: 2,
   /** Fraction of sweep before first sequential clear / after last clear. */
   toothbrushSweepClearStart: 0.14,
   toothbrushSweepClearEnd: 0.86,
