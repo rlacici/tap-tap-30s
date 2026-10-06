@@ -1004,6 +1004,8 @@ export class CavityTapGame {
   /**
    * Optimistic TOP3 on the result panel: merge this score into the cached
    * list and paint immediately, then sync Sheets in the background.
+   * After a **successful** fetch, server values always win (including [0,0,0]
+   * after a sheet clear) — never keep stale pre-reset cache numbers.
    * Never blocks retry. Single-write score submit (no double-post).
    */
   private async populateResultTop3(score: number): Promise<void> {
@@ -1017,6 +1019,7 @@ export class CavityTapGame {
     block.removeAttribute('aria-busy')
     if (this.top3HasScores(optimistic)) {
       // Seed cache so a fast retry still merges against this round's score.
+      // Overwritten when fetch succeeds (including all zeros).
       setCachedTop3(optimistic)
       this.renderTop3Lines(block, optimistic)
       block.hidden = false
@@ -1026,7 +1029,7 @@ export class CavityTapGame {
 
     let server: Top3Scores | null = null
     try {
-      // Background: one score write + fetch. Keep optimistic if this fails.
+      // Background: one score write + fetch. Keep optimistic only if this fails.
       server = await submitSheetsScore(score)
     } catch {
       server = null
@@ -1036,13 +1039,25 @@ export class CavityTapGame {
     const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
     if (!live) return
 
-    if (server && this.top3HasScores(server)) {
-      this.renderTop3Lines(live, server)
-      live.hidden = false
+    if (server) {
+      // Server truth wins — including [0,0,0] after B5–B7 clear.
+      // Race: write may not have landed yet → merge current score into
+      // *fetched* zeros once ([score,0,0]), never rehydrate old cache.
+      let display: Top3Scores = server
+      if (!this.top3HasScores(server) && score > 0) {
+        display = mergeOptimisticTop3(score, server)
+      }
+      setCachedTop3(display)
+      if (this.top3HasScores(display)) {
+        this.renderTop3Lines(live, display)
+        live.hidden = false
+      } else {
+        live.hidden = true
+      }
       return
     }
 
-    // Fetch failed or empty — keep optimistic display (already painted).
+    // Fetch failed — keep optimistic display (already painted).
     if (!this.top3HasScores(optimistic)) {
       live.hidden = true
     }
