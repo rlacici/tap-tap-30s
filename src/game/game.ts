@@ -1,899 +1,176 @@
-import { ASSETS, GAME, SPAWN_ANCHORS, type SpawnAnchor } from './config'
-import { GermController } from './germ'
-import {
-  createMouthScene,
-  getMouthBoard,
-  layoutMouthBoard,
-  mapImagePercentToBoard,
-  whenMouthBackgroundReady,
-} from './mouth'
-import { retryCriticalAssets, whenCriticalAssetsReady } from './preload'
-import { logSheetsEvent } from './sheetsLog'
-import { ToothbrushController } from './toothbrush'
+import { TOOTH_ANCHORS, type ToothKind } from './teethLayout'
 
-type Screen = 'start' | 'playing' | 'result'
+/**
+ * Gameplay + whack-a-mole spawn tunables (tweak here).
+ *
+ * Whack-a-mole knobs:
+ * - concurrentGerms     max germs on screen at once
+ * - dwellMinMs/MaxMs    how long each germ stays before auto-retreat (“쏙”)
+ * - spawnIntervalMin/MaxMs  delay between spawn waves (after previous wave starts)
+ * - burstChance         0–1 chance a wave spawns multiple germs in a short burst
+ * - burstExtraMin/Max   extra germs beyond the first when bursting (total ≤ concurrentGerms)
+ * - burstGapMs          delay between germs inside a burst
+ * - retreatMs           duration of the miss “쏙” shrink animation
+ *
+ * Tap-catch VFX knobs (only on user tap — never on miss/retreat):
+ * - squashMs            short press/squash before the burst
+ * - popMs               germ hide after squash (frees pool slot; keep short so next catch isn’t blocked)
+ * - catchParticleCount  how many star/circle/spark bits (keep low for mobile)
+ * - catchSpreadPx       how far particles fly from the tap point
+ * - catchFxMs           particle burst lifetime
+ * - catchPlusOneMs      +1 float duration (then removed)
+ * - catchPlusOneRisePx  how far +1 travels upward (CSS px)
+ * - catchPlusOneScale   peak scale of the +1
+ *
+ * Toothbrush bonus knobs (independent of germ concurrent cap):
+ * - toothbrushSpawnsPerGameMin/Max  planned appearances per 30s round (~1–2)
+ * - toothbrushSpawnEarliest/LatestSec  game-time window for planned spawns
+ * - toothbrushSpawnGapSec           min seconds between planned spawns
+ * - toothbrushDwellMin/MaxMs        idle time before bonus auto-retreat
+ * - toothbrushRetreatMs             bonus miss retreat length
+ * - toothbrushSweepMs               full AOE sweep duration (timer paused; 4s)
+ * - toothbrushEnsureGerms           target free/active germs before bonus spawn (~5)
+ * - toothbrushEnsureWaitMs          max prepare wait before best-effort bonus spawn
+ * - toothbrushEnsureTopUpMin/Max    germs per prepare top-up tick (up to all missing)
+ * - toothbrushSweepClearStart/End   sequential clear window within the sweep
+ * - toothbrushSizeVw / SweepWidthPct  pickable size vs sweeping brush size
+ * - toothbrushSweepCatch*           stronger pop FX only for sweep clears
+ * - toothbrushSweepTrail*           glitter trail behind the sweeping brush
+ */
+export const GAME = {
+  durationSec: 30,
+  germSizeVw: 18,
 
-function randInt(min: number, max: number): number {
-  return Math.floor(min + Math.random() * (max - min + 1))
+  /** Short squash/press on tap-catch. */
+  squashMs: 90,
+  /** Germ pop/hide after squash — frees the pool slot quickly. */
+  popMs: 200,
+  /** @deprecated use catchPlusOneMs — kept as alias for clarity in older notes. */
+  floatScoreMs: 800,
+
+  /** Max concurrent germs on screen (normal WAM). */
+  concurrentGerms: 4,
+  /** Min/max time a germ stays idle before auto-despawn (miss). */
+  dwellMinMs: 1000,
+  dwellMaxMs: 2000,
+  /** Random delay between spawn waves (independent of catches). */
+  spawnIntervalMinMs: 350,
+  spawnIntervalMaxMs: 900,
+  /** Chance a wave is a short burst of several germs. */
+  burstChance: 0.32,
+  /** Extra germs in a burst (in addition to the first). */
+  burstExtraMin: 1,
+  burstExtraMax: 2,
+  /** Gap between successive germs inside a burst. */
+  burstGapMs: 120,
+  /** Miss despawn “쏙” animation length. */
+  retreatMs: 220,
+
+  // --- Tap-catch VFX only (not used by miss/retreat) ---
+  /** Particle count for the catch burst (mobile-friendly). */
+  catchParticleCount: 39,
+  /** Max travel distance of particles from the catch point (CSS px; ≈ one germ = germSizeVw% of 430). */
+  catchSpreadPx: 94,
+  /** Lifetime of firework particles. */
+  catchFxMs: 800,
+  /** How long the floating +1 stays before cleanup. */
+  catchPlusOneMs: 800,
+  /** Upward travel of +1 (CSS px). */
+  catchPlusOneRisePx: 78,
+  /** Peak scale of +1 during float. */
+  catchPlusOneScale: 1.28,
+
+  // --- Toothbrush bonus (does not count toward concurrentGerms) ---
+  /** Bonus item size vs phone width (germ uses --germ-size 18cqw). */
+  toothbrushSizeVw: 26,
+  /** How many bonus spawns to plan per 30s round. */
+  toothbrushSpawnsPerGameMin: 1,
+  toothbrushSpawnsPerGameMax: 2,
+  /** Earliest / latest game-second a bonus may appear (timer-paused time). */
+  toothbrushSpawnEarliestSec: 4,
+  toothbrushSpawnLatestSec: 24,
+  /** Min gap between planned bonus spawn times (seconds). */
+  toothbrushSpawnGapSec: 8,
+  /** Idle dwell before auto-retreat (no penalty). */
+  toothbrushDwellMinMs: 2000,
+  toothbrushDwellMaxMs: 3000,
+  /** Miss retreat animation length for the bonus item. */
+  toothbrushRetreatMs: 220,
+  /** Full sweep travel duration (timer paused; no new germ spawns). 4s feel. */
+  toothbrushSweepMs: 4000,
+  /**
+   * Before a planned toothbrush spawn: briefly allow up to this many active
+   * germs so the sweep has a fuller board. Normal WAM stays at concurrentGerms.
+   */
+  toothbrushEnsureGerms: 5,
+  /**
+   * Max prepare wait (ms) before best-effort brush spawn.
+   * Prefer waiting until active >= toothbrushEnsureGerms; after this cap, keep
+   * filling briefly while free anchors remain, then spawn.
+   */
+  toothbrushEnsureWaitMs: 2200,
+  /** Aggressive prepare top-ups (batch can fill all missing up to target). */
+  toothbrushEnsureTopUpMin: 5,
+  toothbrushEnsureTopUpMax: 5,
+  /** Fraction of sweep before first sequential clear / after last clear. */
+  toothbrushSweepClearStart: 0.14,
+  toothbrushSweepClearEnd: 0.86,
+  /** Sweep brush width as % of play-board width. */
+  toothbrushSweepWidthPct: 78,
+
+  // --- Sweep-only catch FX boost (normal tap uses catch* above) ---
+  toothbrushSweepCatchParticleCount: 44,
+  toothbrushSweepCatchSpreadPx: 112,
+  toothbrushSweepCatchFxMs: 980,
+  toothbrushSweepCatchPlusOneMs: 980,
+  toothbrushSweepCatchPlusOneRisePx: 96,
+  toothbrushSweepCatchPlusOneScale: 1.48,
+
+  // --- Sweep glitter trail (“샤라랑”) — soft twinkles left behind the brush ---
+  /** How often to emit a sparkle burst along the trail (ms). */
+  toothbrushSweepTrailEveryMs: 46,
+  /** How long each trail sparkle lives before fade-out. */
+  toothbrushSweepTrailLifeMs: 560,
+  /** Sparkles spawned per emit tick. */
+  toothbrushSweepTrailBurst: 3,
+} as const
+
+/** Prefix public asset paths with Vite `base` (GitHub Pages project sites). */
+function withBase(path: string): string {
+  const base = import.meta.env.BASE_URL || '/'
+  const clean = path.replace(/^\//, '')
+  return `${base.endsWith('/') ? base : `${base}/`}${clean}`
 }
 
-function randBetween(min: number, max: number): number {
-  return min + Math.random() * (max - min)
+export const ASSETS = {
+  /** Full-resolution germ for in-game tap targets (optimized webp). */
+  germ: withBase('assets/germ.webp'),
+  /** Compact start-screen hero (preloaded; lighter than full art). */
+  germHero: withBase('assets/germ-hero.webp'),
+  /** Michuhol health center mark (full source). */
+  michuholMark: withBase('assets/michuhol-health-mark.png'),
+  /** Compact HUD mark. */
+  michuholMarkHud: withBase('assets/michuhol-mark.webp'),
+  /** User-supplied full-bleed mouth play background (937×1678 ≈ 430∶770). */
+  mouthBoard: withBase('assets/user-mouth-background.webp'),
+  mouthChart: withBase('assets/mouth-chart.png'),
+  mouthBg: withBase('assets/mouth-bg.jpg'),
+  /** Bonus toothbrush item + sweep brush (user-supplied art, webp). */
+  toothbrush: withBase('assets/toothbrush.webp'),
+} as const
+
+export type SpawnAnchor = {
+  id: string
+  x: number
+  y: number
+  arch: 'upper' | 'lower' | 'tongue'
+  kind: ToothKind
 }
 
-export class CavityTapGame {
-  private root: HTMLElement
-  private hud!: HTMLElement
-  private hudTime!: HTMLElement
-  private hudScore!: HTMLElement
-  private overlay!: HTMLElement
-  private stage!: HTMLElement
-  private mouthScene!: HTMLElement
-  private mouthBoard!: HTMLElement
-  private germs: GermController[] = []
-  private toothbrush!: ToothbrushController
-  private occupiedAnchors = new Set<string>()
-  private score = 0
-  private timeLeft: number = GAME.durationSec
-  private elapsedSec = 0
-  /** Remaining countdown in ms (wall-clock; paused while hidden or sweeping). */
-  private remainingMs: number = GAME.durationSec * 1000
-  /** Accumulated play time in ms (for toothbrush plan seconds). */
-  private elapsedMs = 0
-  private lastTimerNow: number | null = null
-  private timerId: number | null = null
-  private spawnTimer: number | null = null
-  private burstTimers: number[] = []
-  private sweepClearTimers: number[] = []
-  private sweepEndTimer: number | null = null
-  private sweepTrailTimer: number | null = null
-  private sweepTrailCleanup: number | null = null
-  /** Planned game-seconds (elapsed) when a toothbrush should appear. */
-  private toothbrushPlan: number[] = []
-  private sweeping = false
-  /**
-   * True from toothbrush prepare-window start until retreat/sweep ends.
-   * Temporarily allows concurrent germs up to toothbrushEnsureGerms.
-   */
-  private brushEnsure = false
-  private brushEnsureStartedAt = 0
-  private brushEnsureTimer: number | null = null
-  private brushEnsureTopUpTimers: number[] = []
-  /** True while document is hidden during an active round (timer/spawner paused). */
-  private backgroundPaused = false
-  private screen: Screen = 'start'
-  private onResize = (): void => {
-    layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-    this.fitHudBrand()
-    if (this.screen === 'start') this.fitStartEyebrow()
-  }
-  private onVisibilityChange = (): void => {
-    this.handleVisibilityChange()
-  }
-
-  /** Grow HUD brand type to fill the center strip (one line, no wrap). */
-  private fitHudBrand(): void {
-    const brand = this.root.querySelector<HTMLElement>('.brand')
-    const text = this.root.querySelector<HTMLElement>('.brand__text')
-    const mark = this.root.querySelector<HTMLElement>('.brand__mark')
-    if (!brand || !text) return
-
-    const brandWidth = brand.clientWidth
-    if (brandWidth <= 0) return
-
-    const markW = mark?.getBoundingClientRect().width ?? 0
-    const gap = 6
-    const available = Math.max(40, brandWidth - markW - gap)
-    // Leave a little breathing room so it doesn't kiss the chips.
-    const target = available * 0.96
-
-    let lo = 10
-    let hi = 22
-    let best = lo
-    text.style.letterSpacing = '-0.045em'
-    text.style.whiteSpace = 'nowrap'
-
-    for (let i = 0; i < 12; i++) {
-      const mid = (lo + hi) / 2
-      text.style.fontSize = `${mid}px`
-      const w = text.scrollWidth
-      if (w <= target) {
-        best = mid
-        lo = mid
-      } else {
-        hi = mid
-      }
-    }
-
-    text.style.fontSize = `${best.toFixed(2)}px`
-    if (mark) {
-      const markSize = Math.max(18, Math.min(28, best * 1.15))
-      mark.style.width = `${markSize}px`
-      mark.style.height = `${markSize}px`
-    }
-  }
-
-  /** Scale start-panel eyebrow to the widest single line that fits the panel. */
-  private fitStartEyebrow(): void {
-    const panel = this.overlay.querySelector<HTMLElement>('.panel--start')
-    const eyebrow = this.overlay.querySelector<HTMLElement>('.panel__eyebrow')
-    if (!panel || !eyebrow || this.screen !== 'start') return
-
-    const styles = getComputedStyle(panel)
-    const padX =
-      (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0)
-    // Leave a couple px so glyphs don't kiss the border.
-    const available = Math.max(40, panel.clientWidth - padX - 4)
-    if (available <= 0) return
-
-    eyebrow.style.whiteSpace = 'nowrap'
-    eyebrow.style.letterSpacing = '-0.045em'
-    // Unconstrain while measuring — max-width:100% makes scrollWidth report the box, not the text.
-    eyebrow.style.maxWidth = 'none'
-    eyebrow.style.overflow = 'visible'
-    eyebrow.style.display = 'inline-block'
-
-    let lo = 14
-    let hi = 36
-    let best = lo
-    for (let i = 0; i < 16; i++) {
-      const mid = (lo + hi) / 2
-      eyebrow.style.fontSize = `${mid}px`
-      if (eyebrow.scrollWidth <= available) {
-        best = mid
-        lo = mid
-      } else {
-        hi = mid
-      }
-    }
-    eyebrow.style.fontSize = `${best.toFixed(2)}px`
-    eyebrow.style.maxWidth = '100%'
-    eyebrow.style.overflow = 'hidden'
-    eyebrow.style.display = ''
-  }
-
-  constructor(host: HTMLElement) {
-    this.root = document.createElement('div')
-    this.root.className = 'game-shell'
-    host.appendChild(this.root)
-    this.renderShell()
-    this.showStart()
-  }
-
-  private renderShell(): void {
-    this.root.innerHTML = `
-      <div class="phone-frame">
-        <header class="hud" aria-live="polite">
-          <div class="hud__chip hud__time">
-            <span class="hud__label">시간</span>
-            <span class="hud__value" data-hud="time">${GAME.durationSec}</span>
-          </div>
-          <div class="brand" aria-label="미추홀구보건소와 함께 해요!">
-            <img
-              class="brand__mark"
-              src="${ASSETS.michuholMarkHud}"
-              width="128"
-              height="128"
-              alt=""
-              draggable="false"
-              decoding="async"
-            />
-            <span class="brand__text">미추홀구보건소와 함께 해요!</span>
-          </div>
-          <div class="hud__chip hud__score">
-            <span class="hud__label">점수</span>
-            <span class="hud__value" data-hud="score">0</span>
-          </div>
-        </header>
-
-        <div class="stage" data-stage>
-          <div class="float-layer" data-float></div>
-        </div>
-
-        <div class="overlay" data-overlay></div>
-      </div>
-    `
-
-    this.hud = this.root.querySelector('.hud')!
-    this.hudTime = this.root.querySelector('[data-hud="time"]')!
-    this.hudScore = this.root.querySelector('[data-hud="score"]')!
-    this.overlay = this.root.querySelector('[data-overlay]')!
-    this.stage = this.root.querySelector('[data-stage]')!
-
-    const mouth = createMouthScene()
-    this.mouthScene = mouth
-    this.stage.insertBefore(mouth, this.stage.firstChild)
-    this.mouthBoard = getMouthBoard(mouth)
-    layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-    window.addEventListener('resize', this.onResize)
-    document.addEventListener('visibilitychange', this.onVisibilityChange)
-
-    const floatLayer = this.root.querySelector('[data-float]') as HTMLElement
-    // Pool must cover temporary toothbrush ensure cap (e.g. 5), not only normal WAM.
-    const poolSize = Math.max(1, GAME.concurrentGerms, GAME.toothbrushEnsureGerms)
-    for (let i = 0; i < poolSize; i++) {
-      this.germs.push(
-        new GermController(
-          this.mouthBoard,
-          floatLayer,
-          {
-            onCaught: () => this.handleCatch(),
-            onPopComplete: (germ) => this.handleSlotFree(germ),
-            onMissComplete: (germ) => this.handleSlotFree(germ),
-          },
-          i * 40,
-        ),
-      )
-    }
-    this.toothbrush = new ToothbrushController(this.mouthBoard, {
-      onActivated: () => this.beginToothbrushSweep(),
-      onMissComplete: (item) => {
-        this.releaseAnchor(item.anchorId)
-        this.endBrushEnsure()
-      },
-    })
-    this.hideAllGerms()
-    requestAnimationFrame(() => this.fitHudBrand())
-  }
-
-  private showStart(): void {
-    this.screen = 'start'
-    this.stopTimer()
-    this.stopSpawner()
-    this.hideAllGerms()
-    this.overlay.hidden = false
-    this.overlay.innerHTML = `
-      <div class="panel panel--start">
-        <img
-          class="panel__hero"
-          src="${ASSETS.germHero}"
-          width="320"
-          height="320"
-          alt=""
-          draggable="false"
-          decoding="async"
-          fetchpriority="high"
-        />
-        <p class="panel__eyebrow">미추홀구보건소와 함께하는</p>
-        <h1 class="panel__title">탭탭! 30초 미션</h1>
-        <p class="panel__copy">입속에 나타난 충치균을<br />톡톡 잡아보세요!</p>
-        <p class="panel__hint" aria-label="힌트">
-          <span class="panel__hint-label">💡 힌트!</span>
-          반짝이는 칫솔이 나오면 톡!<br />쓸고 지나가며 충치균을 잡아요!
-        </p>
-        <p class="panel__load-status" data-load-status hidden></p>
-        <button type="button" class="btn btn--gated" data-action="start" disabled aria-disabled="true">
-          불러오는 중…
-        </button>
-      </div>
-    `
-    const startBtn = this.overlay.querySelector<HTMLButtonElement>('[data-action="start"]')!
-    const loadStatus = this.overlay.querySelector<HTMLElement>('[data-load-status]')!
-    let assetsReady = false
-
-    const enableStart = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = true
-      loadStatus.hidden = true
-      loadStatus.textContent = ''
-      startBtn.disabled = false
-      startBtn.removeAttribute('aria-disabled')
-      startBtn.classList.remove('btn--gated')
-      startBtn.dataset.action = 'start'
-      startBtn.textContent = '시작하기'
-    }
-
-    const showLoadFailure = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = false
-      loadStatus.hidden = false
-      loadStatus.textContent = '이미지를 불러오지 못했어요. 다시 시도해 주세요.'
-      startBtn.disabled = false
-      startBtn.removeAttribute('aria-disabled')
-      startBtn.classList.remove('btn--gated')
-      startBtn.dataset.action = 'retry-assets'
-      startBtn.textContent = '다시 불러오기'
-    }
-
-    const showLoading = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = false
-      loadStatus.hidden = true
-      loadStatus.textContent = ''
-      startBtn.disabled = true
-      startBtn.setAttribute('aria-disabled', 'true')
-      startBtn.classList.add('btn--gated')
-      startBtn.dataset.action = 'start'
-      startBtn.textContent = '불러오는 중…'
-    }
-
-    startBtn.addEventListener('click', () => {
-      if (startBtn.disabled) return
-      if (startBtn.dataset.action === 'retry-assets') {
-        showLoading()
-        void retryCriticalAssets().then(enableStart).catch(showLoadFailure)
-        return
-      }
-      if (!assetsReady) return
-      this.startRound()
-    })
-
-    void whenCriticalAssetsReady().then(enableStart).catch(showLoadFailure)
-
-    requestAnimationFrame(() => {
-      this.fitStartEyebrow()
-      requestAnimationFrame(() => this.fitStartEyebrow())
-    })
-  }
-
-  private startRound(): void {
-    this.screen = 'playing'
-    this.score = 0
-    this.timeLeft = GAME.durationSec
-    this.elapsedSec = 0
-    this.remainingMs = GAME.durationSec * 1000
-    this.elapsedMs = 0
-    this.backgroundPaused = false
-    this.sweeping = false
-    this.endBrushEnsure()
-    this.mouthBoard.classList.remove('is-sweeping')
-    this.clearSweepRuntime()
-    this.planToothbrushSpawns()
-    this.hudScore.textContent = '0'
-    this.hudTime.textContent = String(this.timeLeft)
-    this.overlay.hidden = true
-    this.overlay.innerHTML = ''
-    this.stopSpawner()
-    this.hideAllGerms()
-    this.startTimer()
-    // Playing UI can show immediately, but hold WAM until mouth BG is painted/ready.
-    void whenMouthBackgroundReady().then(() => {
-      if (this.screen !== 'playing') return
-      requestAnimationFrame(() => {
-        layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-        requestAnimationFrame(() => {
-          if (this.screen === 'playing' && !this.sweeping && !document.hidden) {
-            this.startSpawner()
-          }
-        })
-      })
-    })
-  }
-
-  /**
-   * Wall-clock countdown: accumulates with performance.now(), pauses while
-   * sweeping or document.hidden so background/lock doesn't skew the 30s.
-   */
-  private startTimer(): void {
-    this.stopTimer(false)
-    this.lastTimerNow = performance.now()
-    this.timerId = window.setInterval(() => this.syncTimerFromClock(), 100)
-  }
-
-  private stopTimer(flush = true): void {
-    if (flush) this.flushTimerClock()
-    if (this.timerId !== null) {
-      window.clearInterval(this.timerId)
-      this.timerId = null
-    }
-    this.lastTimerNow = null
-  }
-
-  private flushTimerClock(): void {
-    if (this.lastTimerNow === null || this.sweeping || this.backgroundPaused) return
-    const now = performance.now()
-    const dt = Math.max(0, now - this.lastTimerNow)
-    this.lastTimerNow = now
-    this.remainingMs = Math.max(0, this.remainingMs - dt)
-    this.elapsedMs += dt
-    this.applyTimerDisplay()
-  }
-
-  private syncTimerFromClock(): void {
-    if (this.screen !== 'playing' || this.sweeping || this.backgroundPaused) return
-    if (document.hidden) return
-    this.flushTimerClock()
-    if (this.remainingMs <= 0) {
-      this.endRound()
-    }
-  }
-
-  private applyTimerDisplay(): void {
-    const timeLeft = Math.max(0, Math.ceil(this.remainingMs / 1000))
-    const elapsedSec = Math.min(
-      GAME.durationSec,
-      Math.floor(this.elapsedMs / 1000),
-    )
-    if (timeLeft !== this.timeLeft) {
-      this.timeLeft = timeLeft
-      this.hudTime.textContent = String(this.timeLeft)
-    }
-    if (elapsedSec > this.elapsedSec) {
-      // Catch up toothbrush plans if multiple seconds advanced in one resume.
-      for (let sec = this.elapsedSec + 1; sec <= elapsedSec; sec++) {
-        this.elapsedSec = sec
-        this.trySpawnToothbrushForElapsed()
-      }
-    }
-  }
-
-  private handleVisibilityChange(): void {
-    if (this.screen !== 'playing') return
-    if (document.hidden) {
-      if (this.backgroundPaused) return
-      // Flush remaining time before pausing the clock.
-      this.flushTimerClock()
-      this.backgroundPaused = true
-      this.lastTimerNow = null
-      // Freeze new waves while backgrounded (dwell timers on live germs unchanged).
-      this.stopSpawner()
-      return
-    }
-    if (!this.backgroundPaused) return
-    this.backgroundPaused = false
-    if (this.sweeping) return
-    this.lastTimerNow = performance.now()
-    this.syncTimerFromClock()
-    if (this.screen === 'playing' && !this.sweeping) {
-      this.startSpawner()
-    }
-  }
-
-  /** Plan ~1–2 bonus appearances in the mid-round window (game-time seconds). */
-  private planToothbrushSpawns(): void {
-    // Dev helper: `?brush=1` forces an early spawn for local proof/recording.
-    if (import.meta.env.DEV && new URLSearchParams(location.search).has('brush')) {
-      this.toothbrushPlan = [2]
-      return
-    }
-    const count = randInt(
-      GAME.toothbrushSpawnsPerGameMin,
-      GAME.toothbrushSpawnsPerGameMax,
-    )
-    const earliest = GAME.toothbrushSpawnEarliestSec
-    const latest = Math.min(GAME.toothbrushSpawnLatestSec, GAME.durationSec - 3)
-    const gap = GAME.toothbrushSpawnGapSec
-    const times: number[] = []
-    for (let n = 0; n < count; n++) {
-      let placed = false
-      for (let attempt = 0; attempt < 24; attempt++) {
-        const t = randInt(earliest, latest)
-        if (times.every((other) => Math.abs(other - t) >= gap)) {
-          times.push(t)
-          placed = true
-          break
-        }
-      }
-      if (!placed && times.length === 0) {
-        times.push(Math.round((earliest + latest) / 2))
-      }
-    }
-    this.toothbrushPlan = times.sort((a, b) => a - b)
-  }
-
-  private trySpawnToothbrushForElapsed(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (!this.toothbrushPlan.includes(this.elapsedSec)) return
-    // Drop this planned slot if the previous bonus is still on screen / preparing.
-    if (this.toothbrush.isActive || this.brushEnsure) return
-    this.beginToothbrushEnsure()
-  }
-
-  /**
-   * Short prepare window before a planned toothbrush spawn:
-   * top up toward toothbrushEnsureGerms (small batches), then spawn the brush.
-   * After wait cap, spawn best-effort even if under target.
-   */
-  private beginToothbrushEnsure(): void {
-    if (this.screen !== 'playing' || this.sweeping || this.brushEnsure) return
-    if (this.toothbrush.isActive) return
-    this.brushEnsure = true
-    this.brushEnsureStartedAt = performance.now()
-    this.tickToothbrushEnsure()
-  }
-
-  private tickToothbrushEnsure(): void {
-    this.brushEnsureTimer = null
-    if (!this.brushEnsure) return
-    if (this.screen !== 'playing' || this.sweeping) {
-      this.endBrushEnsure()
-      return
-    }
-    if (this.toothbrush.isActive) return
-
-    const target = GAME.toothbrushEnsureGerms
-    const active = this.countActiveGerms()
-    const waited = performance.now() - this.brushEnsureStartedAt
-    const waitCap = GAME.toothbrushEnsureWaitMs
-
-    if (active >= target || waited >= waitCap) {
-      this.spawnToothbrush()
-      if (this.toothbrush.isActive) {
-        // Cap stays elevated until retreat / sweep ends.
-        this.clearBrushEnsureTimersOnly()
-        return
-      }
-      // No free anchor yet — keep trying briefly; do not silently skip the slot.
-      if (waited < waitCap + 400) {
-        this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), 80)
-        return
-      }
-      this.endBrushEnsure()
-      return
-    }
-
-    // Top up only the missing count, in small 1–2 batches (no flash-spawn of all 5).
-    const missing = target - active
-    const batch = Math.min(
-      missing,
-      randInt(GAME.toothbrushEnsureTopUpMin, GAME.toothbrushEnsureTopUpMax),
-    )
-    for (let i = 0; i < batch; i++) {
-      if (i === 0) {
-        this.spawnOneGerm()
-      } else {
-        const id = window.setTimeout(() => {
-          this.brushEnsureTopUpTimers = this.brushEnsureTopUpTimers.filter((t) => t !== id)
-          if (this.brushEnsure && this.screen === 'playing' && !this.sweeping) {
-            this.spawnOneGerm()
-          }
-        }, i * GAME.burstGapMs)
-        this.brushEnsureTopUpTimers.push(id)
-      }
-    }
-
-    const nextDelay = Math.max(160, batch * GAME.burstGapMs + 100)
-    this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), nextDelay)
-  }
-
-  /** Clear prepare timers but keep elevated concurrent until brush lifecycle ends. */
-  private clearBrushEnsureTimersOnly(): void {
-    if (this.brushEnsureTimer !== null) {
-      window.clearTimeout(this.brushEnsureTimer)
-      this.brushEnsureTimer = null
-    }
-    for (const id of this.brushEnsureTopUpTimers) window.clearTimeout(id)
-    this.brushEnsureTopUpTimers = []
-  }
-
-  /** Restore normal concurrentGerms after toothbrush retreat / sweep / round end. */
-  private endBrushEnsure(): void {
-    this.clearBrushEnsureTimersOnly()
-    this.brushEnsure = false
-    this.brushEnsureStartedAt = 0
-  }
-
-  /** Concurrent cap: normal WAM 4, or ensure target while preparing / brush active / sweep. */
-  private effectiveConcurrentGerms(): number {
-    if (this.brushEnsure || this.toothbrush?.isActive || this.sweeping) {
-      return GAME.toothbrushEnsureGerms
-    }
-    return GAME.concurrentGerms
-  }
-
-  private spawnToothbrush(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (this.toothbrush.isActive) return
-
-    const avoid = this.toothbrush.anchorId
-    const anchor = this.pickFreeAnchor(avoid)
-    if (!anchor) return
-
-    this.occupiedAnchors.add(anchor.id)
-    const mapped = mapImagePercentToBoard(this.mouthBoard, anchor.x, anchor.y)
-    this.toothbrush.placeAt({ ...anchor, x: mapped.x, y: mapped.y })
-  }
-
-  private beginToothbrushSweep(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    this.sweeping = true
-    this.mouthBoard.classList.add('is-sweeping')
-    this.clearBrushEnsureTimersOnly()
-    this.releaseAnchor(this.toothbrush.anchorId)
-    this.toothbrush.hide()
-
-    // Pause countdown + stop new germ waves for the sweep only.
-    this.stopTimer()
-    this.stopSpawner()
-
-    const targets = this.germs
-      .filter((g) => g.isActive)
-      .sort((a, b) => a.boardPos.x - b.boardPos.x || a.boardPos.y - b.boardPos.y)
-
-    this.playSweepBrush()
-
-    const sweepMs = GAME.toothbrushSweepMs
-    const startFrac = GAME.toothbrushSweepClearStart
-    const endFrac = GAME.toothbrushSweepClearEnd
-    const windowMs = Math.max(0, (endFrac - startFrac) * sweepMs)
-    const stagger =
-      targets.length <= 1 ? 0 : windowMs / (targets.length - 1)
-
-    for (let i = 0; i < targets.length; i++) {
-      const germ = targets[i]!
-      const delay = Math.round(startFrac * sweepMs + i * stagger)
-      const id = window.setTimeout(() => {
-        this.sweepClearTimers = this.sweepClearTimers.filter((t) => t !== id)
-        if (this.screen !== 'playing') return
-        germ.forceCatch()
-      }, delay)
-      this.sweepClearTimers.push(id)
-    }
-
-    this.sweepEndTimer = window.setTimeout(() => {
-      this.sweepEndTimer = null
-      this.finishToothbrushSweep()
-    }, sweepMs)
-  }
-
-  /** Large brush crosses the play board only (mouth-board clipped; HUD untouched). */
-  private playSweepBrush(): void {
-    const existing = this.mouthBoard.querySelector('.sweep-brush')
-    existing?.remove()
-    this.mouthBoard.querySelector('.sweep-trail')?.remove()
-
-    const brush = document.createElement('div')
-    brush.className = 'sweep-brush'
-    brush.setAttribute('aria-hidden', 'true')
-    brush.style.setProperty('--sweep-ms', `${GAME.toothbrushSweepMs}ms`)
-    brush.style.setProperty('--sweep-width', `${GAME.toothbrushSweepWidthPct}%`)
-    brush.innerHTML = `<img class="sweep-brush__art" src="${ASSETS.toothbrush}" alt="" draggable="false" />`
-    this.mouthBoard.appendChild(brush)
-
-    const trail = document.createElement('div')
-    trail.className = 'sweep-trail'
-    trail.setAttribute('aria-hidden', 'true')
-    this.mouthBoard.appendChild(trail)
-
-    // Restart CSS animation reliably.
-    void brush.offsetWidth
-    brush.classList.add('is-running')
-    this.startSweepTrail(brush, trail)
-
-    window.setTimeout(() => {
-      brush.remove()
-    }, GAME.toothbrushSweepMs + 40)
-  }
-
-  /** Soft glitter trail left behind the brush as it travels L→R (no text). */
-  private startSweepTrail(brush: HTMLElement, trail: HTMLElement): void {
-    this.stopSweepTrail()
-
-    const emit = (): void => {
-      if (!this.sweeping || !brush.isConnected || !trail.isConnected) return
-      const boardRect = this.mouthBoard.getBoundingClientRect()
-      if (boardRect.width <= 0) return
-      const brushRect = brush.getBoundingClientRect()
-      // Trailing edge of the brush (behind travel direction L→R).
-      const baseX = brushRect.left - boardRect.left + brushRect.width * 0.12
-      const baseY = brushRect.top - boardRect.top + brushRect.height * 0.48
-      const burst = Math.max(1, GAME.toothbrushSweepTrailBurst)
-      for (let i = 0; i < burst; i++) {
-        const s = document.createElement('span')
-        const kind = i % 3 === 0 ? 'star' : i % 3 === 1 ? 'dot' : 'cross'
-        s.className = `sweep-trail__s sweep-trail__s--${kind}`
-        const ox = (Math.random() - 0.55) * brushRect.width * 0.22
-        const oy = (Math.random() - 0.5) * brushRect.height * 0.55
-        s.style.left = `${baseX + ox}px`
-        s.style.top = `${baseY + oy}px`
-        s.style.setProperty('--life', `${GAME.toothbrushSweepTrailLifeMs}ms`)
-        s.style.setProperty('--drift-x', `${-8 - Math.random() * 22}px`)
-        s.style.setProperty('--drift-y', `${(Math.random() - 0.5) * 18}px`)
-        s.style.setProperty('--size', `${4 + Math.floor(Math.random() * 7)}px`)
-        s.style.setProperty('--delay', `${Math.floor(Math.random() * 30)}ms`)
-        trail.appendChild(s)
-        window.setTimeout(() => s.remove(), GAME.toothbrushSweepTrailLifeMs + 40)
-      }
-      this.sweepTrailTimer = window.setTimeout(emit, GAME.toothbrushSweepTrailEveryMs)
-    }
-
-    // First emit after brush is visibly on-screen.
-    this.sweepTrailTimer = window.setTimeout(emit, 70)
-    this.sweepTrailCleanup = window.setTimeout(() => {
-      this.sweepTrailCleanup = null
-      this.stopSweepTrail()
-      trail.remove()
-    }, GAME.toothbrushSweepMs + GAME.toothbrushSweepTrailLifeMs + 80)
-  }
-
-  private stopSweepTrail(): void {
-    if (this.sweepTrailTimer !== null) {
-      window.clearTimeout(this.sweepTrailTimer)
-      this.sweepTrailTimer = null
-    }
-    if (this.sweepTrailCleanup !== null) {
-      window.clearTimeout(this.sweepTrailCleanup)
-      this.sweepTrailCleanup = null
-    }
-  }
-
-  private finishToothbrushSweep(): void {
-    for (const id of this.sweepClearTimers) window.clearTimeout(id)
-    this.sweepClearTimers = []
-    // Stop emitting new trail sparks; leave fading ones (cleanup timer removes layer).
-    if (this.sweepTrailTimer !== null) {
-      window.clearTimeout(this.sweepTrailTimer)
-      this.sweepTrailTimer = null
-    }
-    this.mouthBoard.querySelector('.sweep-brush')?.remove()
-    this.mouthBoard.classList.remove('is-sweeping')
-    this.sweeping = false
-    this.endBrushEnsure()
-
-    if (this.screen !== 'playing') return
-    // Resume immediately — no modal / screen change.
-    if (document.hidden) {
-      this.backgroundPaused = true
-      this.lastTimerNow = null
-      return
-    }
-    this.startTimer()
-    this.startSpawner()
-  }
-
-  private clearSweepRuntime(): void {
-    for (const id of this.sweepClearTimers) window.clearTimeout(id)
-    this.sweepClearTimers = []
-    if (this.sweepEndTimer !== null) {
-      window.clearTimeout(this.sweepEndTimer)
-      this.sweepEndTimer = null
-    }
-    this.stopSweepTrail()
-    this.mouthBoard?.querySelector('.sweep-brush')?.remove()
-    this.mouthBoard?.querySelector('.sweep-trail')?.remove()
-    this.mouthBoard?.classList.remove('is-sweeping')
-    this.sweeping = false
-    this.endBrushEnsure()
-  }
-
-  /** Independent whack-a-mole spawn loop (not tied to catches). */
-  private startSpawner(): void {
-    this.stopSpawner()
-    // First germ appears quickly after start.
-    this.spawnTimer = window.setTimeout(() => this.runSpawnWave(), 180)
-  }
-
-  private stopSpawner(): void {
-    if (this.spawnTimer !== null) {
-      window.clearTimeout(this.spawnTimer)
-      this.spawnTimer = null
-    }
-    for (const id of this.burstTimers) window.clearTimeout(id)
-    this.burstTimers = []
-  }
-
-  private scheduleNextWave(): void {
-    if (this.screen !== 'playing') return
-    const delay = Math.round(
-      randBetween(GAME.spawnIntervalMinMs, GAME.spawnIntervalMaxMs),
-    )
-    this.spawnTimer = window.setTimeout(() => this.runSpawnWave(), delay)
-  }
-
-  private runSpawnWave(): void {
-    this.spawnTimer = null
-    if (this.screen !== 'playing' || this.sweeping) return
-
-    const freeSlots = this.countFreeGerms()
-    if (freeSlots <= 0) {
-      this.scheduleNextWave()
-      return
-    }
-
-    let count = 1
-    if (Math.random() < GAME.burstChance && freeSlots > 1) {
-      const extra = randInt(GAME.burstExtraMin, GAME.burstExtraMax)
-      count = Math.min(freeSlots, 1 + extra)
-    } else {
-      count = 1
-    }
-
-    for (let i = 0; i < count; i++) {
-      if (i === 0) {
-        this.spawnOneGerm()
-      } else {
-        const id = window.setTimeout(() => {
-          this.burstTimers = this.burstTimers.filter((t) => t !== id)
-          if (this.screen === 'playing') this.spawnOneGerm()
-        }, i * GAME.burstGapMs)
-        this.burstTimers.push(id)
-      }
-    }
-
-    this.scheduleNextWave()
-  }
-
-  private countFreeGerms(): number {
-    const freePool = this.germs.filter((g) => !g.isActive).length
-    const room = Math.max(0, this.effectiveConcurrentGerms() - this.countActiveGerms())
-    return Math.min(freePool, room)
-  }
-
-  private countActiveGerms(): number {
-    return this.germs.filter((g) => g.isActive).length
-  }
-
-  private spawnOneGerm(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (this.countActiveGerms() >= this.effectiveConcurrentGerms()) return
-
-    const germ = this.germs.find((g) => !g.isActive)
-    if (!germ) return
-
-    const anchor = this.pickFreeAnchor()
-    if (!anchor) return
-
-    this.occupiedAnchors.add(anchor.id)
-    const mapped = mapImagePercentToBoard(this.mouthBoard, anchor.x, anchor.y)
-    germ.placeAt({ ...anchor, x: mapped.x, y: mapped.y })
-  }
-
-  private handleCatch(): void {
-    if (this.screen !== 'playing') return
-    this.score += 1
-    this.hudScore.textContent = String(this.score)
-  }
-
-  /** Free slot after tap-pop or miss-retreat — do not auto-replace. */
-  private handleSlotFree(germ: GermController): void {
-    this.releaseAnchor(germ.anchorId)
-  }
-
-  /**
-   * Pick a free spawn anchor with fair arch coverage.
-   * Previous “farthest from occupied” bias starved the center tongue
-   * whenever any tooth was busy. Now: pick a random arch among those
-   * that still have free anchors, then a random free point in that arch.
-   */
-  private pickFreeAnchor(avoidId: string | null = null): SpawnAnchor | null {
-    const free = SPAWN_ANCHORS.filter((a) => !this.occupiedAnchors.has(a.id))
-    if (free.length === 0) return null
-    const preferred =
-      avoidId && free.length > 1 ? free.filter((a) => a.id !== avoidId) : free
-    const pool = preferred.length > 0 ? preferred : free
-
-    const arches = [...new Set(pool.map((a) => a.arch))]
-    const arch = arches[Math.floor(Math.random() * arches.length)]!
-    const inArch = pool.filter((a) => a.arch === arch)
-    return inArch[Math.floor(Math.random() * inArch.length)]!
-  }
-
-  private releaseAnchor(id: string | null): void {
-    if (id) this.occupiedAnchors.delete(id)
-  }
-
-  private hideAllGerms(): void {
-    this.endBrushEnsure()
-    this.occupiedAnchors.clear()
-    for (const germ of this.germs) germ.hide()
-    this.toothbrush?.hide()
-    const floatLayer = this.root.querySelector('[data-float]')
-    if (floatLayer) floatLayer.replaceChildren()
-  }
-
-  private endRound(): void {
-    this.screen = 'result'
-    this.clearSweepRuntime()
-    this.endBrushEnsure()
-    this.stopTimer()
-    this.stopSpawner()
-    this.hideAllGerms()
-    logSheetsEvent('complete')
-    this.overlay.hidden = false
-    this.overlay.innerHTML = `
-      <div class="panel panel--result">
-        <h2 class="panel__title">🎉 30초 미션 완료!</h2>
-        <p class="panel__score">충치균 <span>${this.score}</span>마리 잡기 성공!</p>
-        <p class="panel__tip">진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
-        <button type="button" class="btn btn--pulse" data-action="retry">다시 도전하기</button>
-      </div>
-    `
-    const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
-    retry.addEventListener('click', () => {
-      retry.classList.remove('btn--pulse')
-      logSheetsEvent('retry')
-      this.startRound()
-    })
-  }
-}
-
+export const SPAWN_ANCHORS: SpawnAnchor[] = TOOTH_ANCHORS.map((t) => ({
+  id: t.id,
+  x: t.x,
+  y: t.y,
+  arch: t.arch,
+  kind: t.kind,
+}))
