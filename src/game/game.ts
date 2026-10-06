@@ -33,8 +33,11 @@ export class CavityTapGame {
   private hud!: HTMLElement
   private hudTime!: HTMLElement
   private hudScore!: HTMLElement
+  private endCountdown!: HTMLElement
   private overlay!: HTMLElement
   private stage!: HTMLElement
+  /** Last 5…1 digit already flashed (avoid repeat ticks). */
+  private lastEndCountdownDigit: number | null = null
   private mouthScene!: HTMLElement
   private mouthBoard!: HTMLElement
   private germs: GermController[] = []
@@ -202,6 +205,13 @@ export class CavityTapGame {
           <div class="float-layer" data-float></div>
         </div>
 
+        <div
+          class="end-countdown"
+          data-end-countdown
+          hidden
+          aria-hidden="true"
+        ></div>
+
         <div class="overlay" data-overlay></div>
       </div>
     `
@@ -209,6 +219,7 @@ export class CavityTapGame {
     this.hud = this.root.querySelector('.hud')!
     this.hudTime = this.root.querySelector('[data-hud="time"]')!
     this.hudScore = this.root.querySelector('[data-hud="score"]')!
+    this.endCountdown = this.root.querySelector('[data-end-countdown]')!
     this.overlay = this.root.querySelector('[data-overlay]')!
     this.stage = this.root.querySelector('[data-stage]')!
 
@@ -363,8 +374,18 @@ export class CavityTapGame {
     this.mouthBoard.classList.remove('is-sweeping')
     this.clearSweepRuntime()
     this.planToothbrushSpawns()
+    this.clearEndCountdown()
     this.hudScore.textContent = '0'
     this.hudTime.textContent = String(this.timeLeft)
+    // Dev helper: `?endcd=1` starts near the final 5s flash.
+    if (
+      import.meta.env.DEV &&
+      new URLSearchParams(location.search).has('endcd')
+    ) {
+      this.remainingMs = 5500
+      this.timeLeft = Math.ceil(this.remainingMs / 1000)
+      this.hudTime.textContent = String(this.timeLeft)
+    }
     this.overlay.hidden = true
     this.overlay.innerHTML = ''
     this.stopSpawner()
@@ -431,6 +452,10 @@ export class CavityTapGame {
     if (timeLeft !== this.timeLeft) {
       this.timeLeft = timeLeft
       this.hudTime.textContent = String(this.timeLeft)
+      // Final 5s: flash 5→1 only (no 0 / 끝!). Taps still hit germs.
+      if (timeLeft >= 1 && timeLeft <= 5) {
+        this.flashEndCountdown(timeLeft)
+      }
     }
     if (elapsedSec > this.elapsedSec) {
       // Catch up toothbrush plans if multiple seconds advanced in one resume.
@@ -439,6 +464,27 @@ export class CavityTapGame {
         this.trySpawnToothbrushForElapsed()
       }
     }
+  }
+
+  /** Center flash for the last 5 seconds — pointer-events none, fade ~0.7s. */
+  private flashEndCountdown(digit: number): void {
+    if (digit < 1 || digit > 5) return
+    if (this.lastEndCountdownDigit === digit) return
+    this.lastEndCountdownDigit = digit
+    const el = this.endCountdown
+    el.textContent = String(digit)
+    el.hidden = false
+    el.classList.remove('is-tick')
+    // Restart CSS animation for each new second.
+    void el.offsetWidth
+    el.classList.add('is-tick')
+  }
+
+  private clearEndCountdown(): void {
+    this.lastEndCountdownDigit = null
+    this.endCountdown.classList.remove('is-tick')
+    this.endCountdown.textContent = ''
+    this.endCountdown.hidden = true
   }
 
   private handleVisibilityChange(): void {
@@ -963,6 +1009,7 @@ export class CavityTapGame {
     this.stopTimer()
     this.stopSpawner()
     this.hideAllGerms()
+    this.clearEndCountdown()
     logSheetsEvent('complete')
 
     // Same-frame optimistic TOP3: numbers in the first result HTML paint.
