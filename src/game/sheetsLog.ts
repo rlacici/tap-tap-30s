@@ -128,17 +128,14 @@ export function mergeOptimisticTop3(
   return [merged[0]!, merged[1]!, merged[2]!]
 }
 
-function isEmptyTop3(top3: Top3Scores): boolean {
-  return top3[0] <= 0 && top3[1] <= 0 && top3[2] <= 0
-}
-
 /**
  * Submit anonymous score for TOP3 (does not bump 완료횟수 — caller logs complete).
  * Sends the score **exactly once** (no-cors / beacon), then GETs TOP3 for display.
  * (Earlier cors+beacon double-post could fill 1~3위 with the same score.)
  *
- * If the first fetch is still all zeros after a positive score write (race),
- * wait briefly and refetch once — never fall back to a stale pre-reset cache.
+ * Does **not** gate the result UI — caller paints optimistic TOP3 first, then
+ * awaits this in the background. Write/read race (empty fetch after score) is
+ * handled by merging the current score into fetched zeros in the game layer.
  */
 export async function submitSheetsScore(score: number): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -150,13 +147,9 @@ export async function submitSheetsScore(score: number): Promise<Top3Scores | nul
   // Single write only — do not also cors-POST (GAS redirects made that path
   // look like a failure and triggered a second write).
   postFireAndForget(body, url)
+  // Brief pause so the score write can land before TOP3 read (UI already painted).
   await delay(450)
-  let top3 = await fetchSheetsTop3()
-  if (top3 && value > 0 && isEmptyTop3(top3)) {
-    await delay(400)
-    top3 = (await fetchSheetsTop3()) ?? top3
-  }
-  return top3
+  return fetchSheetsTop3()
 }
 
 /**
