@@ -656,8 +656,8 @@ button {
   margin: 0;
   font-family: var(--font-display);
   font-weight: 700;
-  /* ~35–40% of the shorter phone-frame side — lean toward presence */
-  font-size: min(40cqmin, 40vmin);
+  /* ~50–52% of the shorter phone-frame side — readable on mobile, stronger prep cue */
+  font-size: min(52cqmin, 52vmin);
   line-height: 1;
   /* Present enough for "mental prep" before result — not ghostly. */
   color: rgba(255, 255, 255, 0.92);
