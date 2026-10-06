@@ -31,7 +31,7 @@ import { TOOTH_ANCHORS, type ToothKind } from './teethLayout'
  * - toothbrushSweepMs               full AOE sweep duration (timer paused; 4s)
  * - toothbrushEnsureGerms           target free/active germs before bonus spawn (~5)
  * - toothbrushEnsureWaitMs          max prepare wait before best-effort bonus spawn
- * - toothbrushEnsureTopUpMin/Max    germs per prepare top-up tick (avoid flash-spawn)
+ * - toothbrushEnsureTopUpMin/Max    germs per prepare top-up tick (up to all missing)
  * - toothbrushSweepClearStart/End   sequential clear window within the sweep
  * - toothbrushSizeVw / SweepWidthPct  pickable size vs sweeping brush size
  * - toothbrushSweepCatch*           stronger pop FX only for sweep clears
@@ -103,11 +103,15 @@ export const GAME = {
    * germs so the sweep has a fuller board. Normal WAM stays at concurrentGerms.
    */
   toothbrushEnsureGerms: 5,
-  /** Max prepare wait (ms) before spawning the brush with best-effort germ count. */
-  toothbrushEnsureWaitMs: 1100,
-  /** Small top-up batches during prepare (avoid flashing all missing germs at once). */
-  toothbrushEnsureTopUpMin: 1,
-  toothbrushEnsureTopUpMax: 2,
+  /**
+   * Max prepare wait (ms) before best-effort brush spawn.
+   * Prefer waiting until active >= toothbrushEnsureGerms; after this cap, keep
+   * filling briefly while free anchors remain, then spawn.
+   */
+  toothbrushEnsureWaitMs: 2200,
+  /** Aggressive prepare top-ups (batch can fill all missing up to target). */
+  toothbrushEnsureTopUpMin: 5,
+  toothbrushEnsureTopUpMax: 5,
   /** Fraction of sweep before first sequential clear / after last clear. */
   toothbrushSweepClearStart: 0.14,
   toothbrushSweepClearEnd: 0.86,
