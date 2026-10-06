@@ -3,7 +3,11 @@ export type SheetsCounterType = 'complete' | 'retry'
 /** Anonymous TOP3 scores only — no names / PII. */
 export type Top3Scores = [number, number, number]
 
+const TOP3_CACHE_KEY = 'tap-tap-30s:top3'
+
 let missingUrlLogged = false
+/** In-memory fallback when sessionStorage is unavailable. */
+let memoryTop3: Top3Scores | null = null
 
 function webhookUrl(): string | undefined {
   const url = import.meta.env.VITE_SHEETS_WEBHOOK_URL
@@ -56,10 +60,8 @@ export function logSheetsEvent(type: SheetsCounterType): void {
   postFireAndForget(JSON.stringify({ type }), url)
 }
 
-function parseTop3(data: unknown): Top3Scores | null {
-  if (!data || typeof data !== 'object') return null
-  const raw = (data as { top3?: unknown }).top3
-  if (!Array.isArray(raw) || raw.length < 3) return null
+function normalizeTop3(raw: unknown[]): Top3Scores | null {
+  if (raw.length < 3) return null
   const nums = raw.slice(0, 3).map((v) => {
     const n = Number(v)
     return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0
@@ -67,10 +69,63 @@ function parseTop3(data: unknown): Top3Scores | null {
   return [nums[0]!, nums[1]!, nums[2]!]
 }
 
+function parseTop3(data: unknown): Top3Scores | null {
+  if (!data || typeof data !== 'object') return null
+  const raw = (data as { top3?: unknown }).top3
+  if (!Array.isArray(raw)) return null
+  return normalizeTop3(raw)
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
   })
+}
+
+/** Last fetched / known TOP3 for optimistic result UI. */
+export function getCachedTop3(): Top3Scores | null {
+  if (memoryTop3) return memoryTop3
+  try {
+    const raw = sessionStorage.getItem(TOP3_CACHE_KEY)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return null
+    const top3 = normalizeTop3(parsed)
+    if (top3) memoryTop3 = top3
+    return top3
+  } catch {
+    return null
+  }
+}
+
+export function setCachedTop3(top3: Top3Scores): void {
+  memoryTop3 = top3
+  try {
+    sessionStorage.setItem(TOP3_CACHE_KEY, JSON.stringify(top3))
+  } catch {
+    // Private mode / quota — memory cache still works this session.
+  }
+}
+
+/**
+ * Insert the just-finished score into a cached TOP3 (desc, keep 3).
+ * If no cache: [score, 0, 0] when score > 0, else [0, 0, 0].
+ */
+export function mergeOptimisticTop3(
+  score: number,
+  cached: Top3Scores | null,
+): Top3Scores {
+  const value = Math.max(0, Math.floor(Number(score) || 0))
+  if (value <= 0) {
+    return cached ?? [0, 0, 0]
+  }
+  const base = cached ?? [0, 0, 0]
+  const merged = [...base, value]
+    .filter((n) => n > 0)
+    .sort((a, b) => b - a)
+    .slice(0, 3)
+  while (merged.length < 3) merged.push(0)
+  return [merged[0]!, merged[1]!, merged[2]!]
 }
 
 /**
@@ -94,7 +149,7 @@ export async function submitSheetsScore(score: number): Promise<Top3Scores | nul
 
 /**
  * Fetch anonymous TOP3 [s1,s2,s3]. GET ?type=top3 (fallback POST { type: 'top3' }).
- * Returns null on fail / unset URL — UI should hide the block.
+ * On success, updates the session cache. Returns null on fail / unset URL.
  */
 export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -111,7 +166,10 @@ export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
     if (res.ok) {
       const data: unknown = await res.json()
       const top3 = parseTop3(data)
-      if (top3) return top3
+      if (top3) {
+        setCachedTop3(top3)
+        return top3
+      }
     }
   } catch {
     // try POST fallback
@@ -127,7 +185,9 @@ export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
     })
     if (!res.ok) return null
     const data: unknown = await res.json()
-    return parseTop3(data)
+    const top3 = parseTop3(data)
+    if (top3) setCachedTop3(top3)
+    return top3
   } catch {
     return null
   }
