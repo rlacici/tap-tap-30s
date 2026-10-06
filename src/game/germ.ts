@@ -97,7 +97,11 @@ export class GermController {
     return true
   }
 
-  placeAt(anchor: SpawnAnchor, dwellMs?: number): void {
+  /**
+   * Place on an anchor. Pass `dwellMs: false` to stay idle with no miss timer
+   * (used while toothbrush prepare / brush-idle holds the board full).
+   */
+  placeAt(anchor: SpawnAnchor, dwellMs?: number | false): void {
     if (this.destroyed) return
     this.clearAnimTimers()
     this.currentAnchorId = anchor.id
@@ -110,6 +114,42 @@ export class GermController {
     this.el.style.animation = ''
     this.el.classList.add('is-idle')
 
+    if (dwellMs === false) return
+
+    const dwell =
+      dwellMs ??
+      Math.round(randBetween(GAME.dwellMinMs, GAME.dwellMaxMs))
+    this.dwellTimer = window.setTimeout(() => {
+      this.dwellTimer = null
+      this.beginRetreat()
+    }, dwell)
+  }
+
+  /**
+   * Pause miss despawn: clear dwell; if mid-retreat, restore idle without a new dwell.
+   * Used from toothbrush prepare start through brush idle (until sweep or brush leave).
+   */
+  freezeMissDwell(): void {
+    if (this.destroyed) return
+    if (this.dwellTimer !== null) {
+      window.clearTimeout(this.dwellTimer)
+      this.dwellTimer = null
+    }
+    if (this.state === 'retreating') {
+      if (this.retreatTimer !== null) {
+        window.clearTimeout(this.retreatTimer)
+        this.retreatTimer = null
+      }
+      this.state = 'idle'
+      this.el.classList.remove('is-retreating')
+      this.el.classList.add('is-idle')
+    }
+  }
+
+  /** Start a normal miss dwell if idle and none is running. */
+  resumeMissDwell(dwellMs?: number): void {
+    if (this.destroyed || this.state !== 'idle') return
+    if (this.dwellTimer !== null) return
     const dwell =
       dwellMs ??
       Math.round(randBetween(GAME.dwellMinMs, GAME.dwellMaxMs))
