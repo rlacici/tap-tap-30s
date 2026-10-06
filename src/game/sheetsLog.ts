@@ -128,10 +128,17 @@ export function mergeOptimisticTop3(
   return [merged[0]!, merged[1]!, merged[2]!]
 }
 
+function isEmptyTop3(top3: Top3Scores): boolean {
+  return top3[0] <= 0 && top3[1] <= 0 && top3[2] <= 0
+}
+
 /**
  * Submit anonymous score for TOP3 (does not bump 완료횟수 — caller logs complete).
  * Sends the score **exactly once** (no-cors / beacon), then GETs TOP3 for display.
  * (Earlier cors+beacon double-post could fill 1~3위 with the same score.)
+ *
+ * If the first fetch is still all zeros after a positive score write (race),
+ * wait briefly and refetch once — never fall back to a stale pre-reset cache.
  */
 export async function submitSheetsScore(score: number): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -144,12 +151,19 @@ export async function submitSheetsScore(score: number): Promise<Top3Scores | nul
   // look like a failure and triggered a second write).
   postFireAndForget(body, url)
   await delay(450)
-  return fetchSheetsTop3()
+  let top3 = await fetchSheetsTop3()
+  if (top3 && value > 0 && isEmptyTop3(top3)) {
+    await delay(400)
+    top3 = (await fetchSheetsTop3()) ?? top3
+  }
+  return top3
 }
 
 /**
  * Fetch anonymous TOP3 [s1,s2,s3]. GET ?type=top3 (fallback POST { type: 'top3' }).
- * On success, updates the session cache. Returns null on fail / unset URL.
+ * On success, **always** replaces the session cache — including [0,0,0] after a
+ * sheet clear — so stale optimistic values cannot win over server truth.
+ * Returns null on fail / unset URL.
  */
 export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
   const url = webhookUrl()
@@ -167,6 +181,7 @@ export async function fetchSheetsTop3(): Promise<Top3Scores | null> {
       const data: unknown = await res.json()
       const top3 = parseTop3(data)
       if (top3) {
+        // Server truth wins — zeros clear old 67/64 from sessionStorage/memory.
         setCachedTop3(top3)
         return top3
       }
