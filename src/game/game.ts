@@ -51,6 +51,14 @@ export class CavityTapGame {
   /** Planned game-seconds (elapsed) when a toothbrush should appear. */
   private toothbrushPlan: number[] = []
   private sweeping = false
+  /**
+   * True from toothbrush prepare-window start until retreat/sweep ends.
+   * Temporarily allows concurrent germs up to toothbrushEnsureGerms.
+   */
+  private brushEnsure = false
+  private brushEnsureStartedAt = 0
+  private brushEnsureTimer: number | null = null
+  private brushEnsureTopUpTimers: number[] = []
   /** True while document is hidden during an active round (timer/spawner paused). */
   private backgroundPaused = false
   private screen: Screen = 'start'
@@ -201,7 +209,8 @@ export class CavityTapGame {
     document.addEventListener('visibilitychange', this.onVisibilityChange)
 
     const floatLayer = this.root.querySelector('[data-float]') as HTMLElement
-    const poolSize = Math.max(1, GAME.concurrentGerms)
+    // Pool must cover temporary toothbrush ensure cap (e.g. 5), not only normal WAM.
+    const poolSize = Math.max(1, GAME.concurrentGerms, GAME.toothbrushEnsureGerms)
     for (let i = 0; i < poolSize; i++) {
       this.germs.push(
         new GermController(
@@ -218,7 +227,10 @@ export class CavityTapGame {
     }
     this.toothbrush = new ToothbrushController(this.mouthBoard, {
       onActivated: () => this.beginToothbrushSweep(),
-      onMissComplete: (item) => this.releaseAnchor(item.anchorId),
+      onMissComplete: (item) => {
+        this.releaseAnchor(item.anchorId)
+        this.endBrushEnsure()
+      },
     })
     this.hideAllGerms()
     requestAnimationFrame(() => this.fitHudBrand())
@@ -323,6 +335,7 @@ export class CavityTapGame {
     this.elapsedMs = 0
     this.backgroundPaused = false
     this.sweeping = false
+    this.endBrushEnsure()
     this.mouthBoard.classList.remove('is-sweeping')
     this.clearSweepRuntime()
     this.planToothbrushSpawns()
@@ -461,9 +474,101 @@ export class CavityTapGame {
   private trySpawnToothbrushForElapsed(): void {
     if (this.screen !== 'playing' || this.sweeping) return
     if (!this.toothbrushPlan.includes(this.elapsedSec)) return
-    // Drop this planned slot if the previous bonus is still on screen.
+    // Drop this planned slot if the previous bonus is still on screen / preparing.
+    if (this.toothbrush.isActive || this.brushEnsure) return
+    this.beginToothbrushEnsure()
+  }
+
+  /**
+   * Short prepare window before a planned toothbrush spawn:
+   * top up toward toothbrushEnsureGerms (small batches), then spawn the brush.
+   * After wait cap, spawn best-effort even if under target.
+   */
+  private beginToothbrushEnsure(): void {
+    if (this.screen !== 'playing' || this.sweeping || this.brushEnsure) return
     if (this.toothbrush.isActive) return
-    this.spawnToothbrush()
+    this.brushEnsure = true
+    this.brushEnsureStartedAt = performance.now()
+    this.tickToothbrushEnsure()
+  }
+
+  private tickToothbrushEnsure(): void {
+    this.brushEnsureTimer = null
+    if (!this.brushEnsure) return
+    if (this.screen !== 'playing' || this.sweeping) {
+      this.endBrushEnsure()
+      return
+    }
+    if (this.toothbrush.isActive) return
+
+    const target = GAME.toothbrushEnsureGerms
+    const active = this.countActiveGerms()
+    const waited = performance.now() - this.brushEnsureStartedAt
+    const waitCap = GAME.toothbrushEnsureWaitMs
+
+    if (active >= target || waited >= waitCap) {
+      this.spawnToothbrush()
+      if (this.toothbrush.isActive) {
+        // Cap stays elevated until retreat / sweep ends.
+        this.clearBrushEnsureTimersOnly()
+        return
+      }
+      // No free anchor yet — keep trying briefly; do not silently skip the slot.
+      if (waited < waitCap + 400) {
+        this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), 80)
+        return
+      }
+      this.endBrushEnsure()
+      return
+    }
+
+    // Top up only the missing count, in small 1–2 batches (no flash-spawn of all 5).
+    const missing = target - active
+    const batch = Math.min(
+      missing,
+      randInt(GAME.toothbrushEnsureTopUpMin, GAME.toothbrushEnsureTopUpMax),
+    )
+    for (let i = 0; i < batch; i++) {
+      if (i === 0) {
+        this.spawnOneGerm()
+      } else {
+        const id = window.setTimeout(() => {
+          this.brushEnsureTopUpTimers = this.brushEnsureTopUpTimers.filter((t) => t !== id)
+          if (this.brushEnsure && this.screen === 'playing' && !this.sweeping) {
+            this.spawnOneGerm()
+          }
+        }, i * GAME.burstGapMs)
+        this.brushEnsureTopUpTimers.push(id)
+      }
+    }
+
+    const nextDelay = Math.max(160, batch * GAME.burstGapMs + 100)
+    this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), nextDelay)
+  }
+
+  /** Clear prepare timers but keep elevated concurrent until brush lifecycle ends. */
+  private clearBrushEnsureTimersOnly(): void {
+    if (this.brushEnsureTimer !== null) {
+      window.clearTimeout(this.brushEnsureTimer)
+      this.brushEnsureTimer = null
+    }
+    for (const id of this.brushEnsureTopUpTimers) window.clearTimeout(id)
+    this.brushEnsureTopUpTimers = []
+  }
+
+  /** Restore normal concurrentGerms after toothbrush retreat / sweep / round end. */
+  private endBrushEnsure(): void {
+    this.clearBrushEnsureTimersOnly()
+    this.brushEnsure = false
+    this.brushEnsureStartedAt = 0
+  }
+
+  /** Concurrent cap: normal WAM 4, or ensure target while preparing / brush active / sweep. */
+  private effectiveConcurrentGerms(): number {
+    if (this.brushEnsure || this.toothbrush?.isActive || this.sweeping) {
+      return GAME.toothbrushEnsureGerms
+    }
+    return GAME.concurrentGerms
   }
 
   private spawnToothbrush(): void {
@@ -483,6 +588,7 @@ export class CavityTapGame {
     if (this.screen !== 'playing' || this.sweeping) return
     this.sweeping = true
     this.mouthBoard.classList.add('is-sweeping')
+    this.clearBrushEnsureTimersOnly()
     this.releaseAnchor(this.toothbrush.anchorId)
     this.toothbrush.hide()
 
@@ -612,6 +718,7 @@ export class CavityTapGame {
     this.mouthBoard.querySelector('.sweep-brush')?.remove()
     this.mouthBoard.classList.remove('is-sweeping')
     this.sweeping = false
+    this.endBrushEnsure()
 
     if (this.screen !== 'playing') return
     // Resume immediately — no modal / screen change.
@@ -636,6 +743,7 @@ export class CavityTapGame {
     this.mouthBoard?.querySelector('.sweep-trail')?.remove()
     this.mouthBoard?.classList.remove('is-sweeping')
     this.sweeping = false
+    this.endBrushEnsure()
   }
 
   /** Independent whack-a-mole spawn loop (not tied to catches). */
@@ -696,7 +804,9 @@ export class CavityTapGame {
   }
 
   private countFreeGerms(): number {
-    return this.germs.filter((g) => !g.isActive).length
+    const freePool = this.germs.filter((g) => !g.isActive).length
+    const room = Math.max(0, this.effectiveConcurrentGerms() - this.countActiveGerms())
+    return Math.min(freePool, room)
   }
 
   private countActiveGerms(): number {
@@ -705,7 +815,7 @@ export class CavityTapGame {
 
   private spawnOneGerm(): void {
     if (this.screen !== 'playing' || this.sweeping) return
-    if (this.countActiveGerms() >= GAME.concurrentGerms) return
+    if (this.countActiveGerms() >= this.effectiveConcurrentGerms()) return
 
     const germ = this.germs.find((g) => !g.isActive)
     if (!germ) return
@@ -753,6 +863,7 @@ export class CavityTapGame {
   }
 
   private hideAllGerms(): void {
+    this.endBrushEnsure()
     this.occupiedAnchors.clear()
     for (const germ of this.germs) germ.hide()
     this.toothbrush?.hide()
@@ -763,6 +874,7 @@ export class CavityTapGame {
   private endRound(): void {
     this.screen = 'result'
     this.clearSweepRuntime()
+    this.endBrushEnsure()
     this.stopTimer()
     this.stopSpawner()
     this.hideAllGerms()
@@ -784,3 +896,4 @@ export class CavityTapGame {
     })
   }
 }
+
