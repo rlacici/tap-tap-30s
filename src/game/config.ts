@@ -113,8 +113,8 @@ export const GAME = {
   toothbrushEnsureTopUpMin: 5,
   toothbrushEnsureTopUpMax: 5,
   /** Fraction of sweep before first sequential clear / after last clear. */
-  toothbrushSweepClearStart: 0.16,
-  toothbrushSweepClearEnd: 0.70,
+  toothbrushSweepClearStart: 0.18,
+  toothbrushSweepClearEnd: 0.62,
   /** Sweep brush width as % of play-board width. */
   toothbrushSweepWidthPct: 78,
 
