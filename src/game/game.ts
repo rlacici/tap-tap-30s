@@ -9,8 +9,10 @@ import {
 } from './mouth'
 import { retryCriticalAssets, whenCriticalAssetsReady } from './preload'
 import {
-  fetchSheetsTop3,
+  getCachedTop3,
   logSheetsEvent,
+  mergeOptimisticTop3,
+  setCachedTop3,
   submitSheetsScore,
   type Top3Scores,
 } from './sheetsLog'
@@ -968,7 +970,7 @@ export class CavityTapGame {
         <h2 class="panel__title">🎉 30초 미션 완료!</h2>
         <p class="panel__score">충치균 <span>${this.score}</span>마리 잡기 성공!</p>
         <div class="panel__top3" data-top3 hidden>
-          <p class="panel__top3-title">도전! 기록 TOP 3</p>
+          <p class="panel__top3-title">👑 도전! 기록 TOP 3</p>
           <p class="panel__top3-line" data-top3-rank="1">1위: —마리</p>
           <p class="panel__top3-line" data-top3-rank="2">2위: —마리</p>
           <p class="panel__top3-line" data-top3-rank="3">3위: —마리</p>
@@ -986,45 +988,63 @@ export class CavityTapGame {
     void this.populateResultTop3(this.score)
   }
 
+  private top3HasScores(top3: Top3Scores): boolean {
+    return top3[0] > 0 || top3[1] > 0 || top3[2] > 0
+  }
+
+  private renderTop3Lines(block: HTMLElement, top3: Top3Scores): void {
+    const labels = ['1위', '2위', '3위'] as const
+    for (let i = 0; i < 3; i++) {
+      const line = block.querySelector(`[data-top3-rank="${i + 1}"]`)
+      if (!line) continue
+      line.textContent = `${labels[i]}: ${top3[i]!}마리`
+    }
+  }
+
   /**
-   * Load anonymous TOP3 for the result panel. Never blocks retry —
-   * hide the block on failure / empty webhook.
+   * Optimistic TOP3 on the result panel: merge this score into the cached
+   * list and paint immediately, then sync Sheets in the background.
+   * Never blocks retry. Single-write score submit (no double-post).
    */
   private async populateResultTop3(score: number): Promise<void> {
     if (this.screen !== 'result') return
     const block = this.overlay.querySelector<HTMLElement>('[data-top3]')
     if (!block) return
 
-    block.hidden = false
-    block.classList.add('panel__top3--loading')
-    block.setAttribute('aria-busy', 'true')
+    const optimistic = mergeOptimisticTop3(score, getCachedTop3())
+    // Skip long loading — show optimistic TOP3 right away when useful.
+    block.classList.remove('panel__top3--loading')
+    block.removeAttribute('aria-busy')
+    if (this.top3HasScores(optimistic)) {
+      // Seed cache so a fast retry still merges against this round's score.
+      setCachedTop3(optimistic)
+      this.renderTop3Lines(block, optimistic)
+      block.hidden = false
+    } else {
+      block.hidden = true
+    }
 
-    let top3: Top3Scores | null = null
+    let server: Top3Scores | null = null
     try {
-      top3 = await submitSheetsScore(score)
-      if (!top3) top3 = await fetchSheetsTop3()
+      // Background: one score write + fetch. Keep optimistic if this fails.
+      server = await submitSheetsScore(score)
     } catch {
-      top3 = null
+      server = null
     }
 
     if (this.screen !== 'result') return
     const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
     if (!live) return
 
-    live.classList.remove('panel__top3--loading')
-    live.removeAttribute('aria-busy')
-
-    if (!top3 || (top3[0] <= 0 && top3[1] <= 0 && top3[2] <= 0)) {
-      live.hidden = true
+    if (server && this.top3HasScores(server)) {
+      this.renderTop3Lines(live, server)
+      live.hidden = false
       return
     }
 
-    live.hidden = false
-    const labels = ['1위', '2위', '3위'] as const
-    for (let i = 0; i < 3; i++) {
-      const line = live.querySelector(`[data-top3-rank="${i + 1}"]`)
-      if (!line) continue
-      line.textContent = `${labels[i]}: ${top3[i]!}마리`
+    // Fetch failed or empty — keep optimistic display (already painted).
+    if (!this.top3HasScores(optimistic)) {
+      live.hidden = true
     }
   }
 }
