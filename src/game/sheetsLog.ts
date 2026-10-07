@@ -263,6 +263,10 @@ export type FetchTop3Options = {
  * LockService and returns the updated board — no separate GET, so no
  * write/read race. Equal scores both appear when the server returns them.
  *
+ * **Speed:** callers should start this *before* `logSheetsEvent('complete')` so
+ * the score POST wins the shared Apps Script lock (complete/score both use it).
+ * On `trustServer: true` there is **no** follow-up GET.
+ *
  * **Do not** also sendBeacon on the cors success path (that double-inserted the
  * same score into 1~3위). Beacon+GET is fallback only when cors fails entirely
  * (`trustServer: false` — caller may ensureScore for stale GET).
@@ -293,12 +297,17 @@ export async function submitSheetsScore(
       const data: unknown = await res.json()
       const top3 = parseTop3(data)
       if (top3) {
+        // Authoritative — paint ASAP; never issue a follow-up GET.
         setCachedTop3(top3, { authoritative: true })
         return { top3, trustServer: true }
       }
-      // Request likely applied; read board without a second score write.
-      const fetched = await fetchSheetsTop3()
-      if (fetched) return { top3: fetched, trustServer: false }
+      // Rare: write likely applied but JSON missing top3. One recovery GET only
+      // (no second score write). Prefer failing fast over long poll here.
+      const fetched = await fetchSheetsTop3({ persist: false })
+      if (fetched) {
+        setCachedTop3(fetched, { authoritative: false })
+        return { top3: fetched, trustServer: false }
+      }
       return null
     }
   } catch {
@@ -310,10 +319,11 @@ export async function submitSheetsScore(
   // Use top3ReflectsScore — equality with mergeOptimisticTop3 is wrong for a
   // new 1st place (merge(21,[21,20,10]) → [21,21,20] ≠ board, never settles).
   // Tie note: anonymous boards cannot tell "my second 21" from "already one 21".
+  // Shorter first wait: cut client idle before the first probe (GAS floor remains).
   postFireAndForget(body, url)
   let top3: Top3Scores | null = null
   for (let attempt = 0; attempt < 3; attempt++) {
-    await delay(attempt === 0 ? 500 : 400)
+    await delay(attempt === 0 ? 280 : 320)
     const fetched = await fetchSheetsTop3({ persist: false })
     if (!fetched) continue
     top3 = fetched
