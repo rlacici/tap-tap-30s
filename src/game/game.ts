@@ -1132,9 +1132,9 @@ export class CavityTapGame {
    * Background Sheets sync only. Optimistic TOP3 is already in the result HTML
    * (not written to cache until server success).
    *
-   * - Score POST `trustServer`: paint response top3 as-is (ties + no double insert).
-   *   No extra GET on this path — sheet-correct numbers arrive with the POST JSON.
-   * - Beacon/stale GET: ensureScoreInTop3 once (21-duplicate guard).
+   * - Score POST `trustServer`: paint response top3 as-is (strictly greater
+   *   insert on server — equals do not add a slot). No extra GET.
+   * - Beacon/stale GET: ensureScoreInTop3 once (dedupe + no equal insert).
    * - Submit failure: keep optimistic on screen; leave cache at pre-round board.
    * - Late prior-round sync ignored via resultSyncGen.
    * - `started` is the promise kicked off in endRound (score-before-complete).
@@ -1159,8 +1159,8 @@ export class CavityTapGame {
     if (!result) return // keep optimistic paint; cache untouched (no poison)
 
     const server = result.top3
-    // Authoritative POST board: trust as-is (equal scores both appear).
-    // Beacon path may still need a single ensure for stale GET coalesce.
+    // Authoritative POST board: trust as-is (server already strictly-greater + dedupe).
+    // Beacon path: ensure once for stale GET coalesce / local dedupe.
     const display =
       result.trustServer || score <= 0
         ? server
