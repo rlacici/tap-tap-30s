@@ -92,6 +92,11 @@ export class CavityTapGame {
   private warmTop3: Top3Scores | null = null
   /** True after we prefetch once during the final 5s countdown this round. */
   private endCountdownPrefetched = false
+  /**
+   * Result tip holds the retry-button slot for 4s so frantic taps don't skip the tip.
+   * Cleared on startRound / next endRound.
+   */
+  private retryRevealTimer: number | null = null
   private onResize = (): void => {
     layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
     this.fitHudBrand()
@@ -405,9 +410,17 @@ export class CavityTapGame {
       })
   }
 
+  private clearRetryRevealTimer(): void {
+    if (this.retryRevealTimer !== null) {
+      window.clearTimeout(this.retryRevealTimer)
+      this.retryRevealTimer = null
+    }
+  }
+
   private startRound(): void {
     this.screen = 'playing'
     this.endCountdownPrefetched = false
+    this.clearRetryRevealTimer()
     // Retry skips the start panel — refresh cache before this round's optimistic.
     this.prefetchTop3Cache()
     this.score = 0
@@ -1093,16 +1106,27 @@ export class CavityTapGame {
           <p class="panel__top3-line" data-top3-rank="2">2위: ${optimistic[1]}마리</p>
           <p class="panel__top3-line" data-top3-rank="3">3위: ${optimistic[2]}마리</p>
         </div>
-        <p class="panel__tip">진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
-        <button type="button" class="btn btn--pulse" data-action="retry">다시 도전하기</button>
+        <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
+        <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
       </div>
     `
+    const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
     const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
     retry.addEventListener('click', () => {
       retry.classList.remove('btn--pulse')
       logSheetsEvent('retry')
       this.startRound()
     })
+
+    // Tip expands into the retry slot for 4s — no button until then (read the tip).
+    this.clearRetryRevealTimer()
+    this.retryRevealTimer = window.setTimeout(() => {
+      this.retryRevealTimer = null
+      if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
+      tip.classList.remove('panel__tip--holding')
+      retry.hidden = false
+      retry.classList.add('btn--pulse')
+    }, 4000)
 
     // Yield so the score CORS POST is on the wire before complete contends
     // for LockService. Keepalive/beacon still runs if the tab closes soon after.
