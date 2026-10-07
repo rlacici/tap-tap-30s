@@ -1,1283 +1,1374 @@
-import { ASSETS, GAME, SPAWN_ANCHORS, type SpawnAnchor } from './config'
-import { GermController } from './germ'
-import {
-  createMouthScene,
-  getMouthBoard,
-  layoutMouthBoard,
-  mapImagePercentToBoard,
-  whenMouthBackgroundReady,
-} from './mouth'
-import { retryCriticalAssets, whenCriticalAssetsReady } from './preload'
-import {
-  bumpTop3CacheSeq,
-  currentTop3CacheSeq,
-  ensureScoreInTop3,
-  fetchSheetsTop3,
-  getCachedTop3,
-  logSheetsEvent,
-  mergeOptimisticTop3,
-  setCachedTop3,
-  submitSheetsScore,
-  type Top3Scores,
-} from './sheetsLog'
-import { ToothbrushController } from './toothbrush'
-
-type Screen = 'start' | 'playing' | 'result'
-
-function randInt(min: number, max: number): number {
-  return Math.floor(min + Math.random() * (max - min + 1))
+:root {
+  --bg-deep: #101820;
+  --cheek: #ff8fa3;
+  --ink: #12202e;
+  --ink-soft: #3d5166;
+  --cream: #fff7e8;
+  --mint: #3dffb0;
+  --mint-deep: #14c98a;
+  --sun: #ffe14a;
+  --arcade-navy: #141c28;
+  --arcade-navy-2: #1c2736;
+  --arcade-edge: #2c3b50;
+  --panel: #f7fbff;
+  --shadow: 0 16px 40px rgba(8, 14, 24, 0.45);
+  --font-display: "Fredoka", "Nunito", sans-serif;
+  --font-body: "Nunito", "Fredoka", sans-serif;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
 }
 
-function randBetween(min: number, max: number): number {
-  return min + Math.random() * (max - min)
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
-export class CavityTapGame {
-  private root: HTMLElement
-  private hud!: HTMLElement
-  private hudTime!: HTMLElement
-  private hudScore!: HTMLElement
-  private endCountdown!: HTMLElement
-  private brushChanceFlash!: HTMLElement
-  private brushChanceBanner!: HTMLElement
-  private overlay!: HTMLElement
-  private stage!: HTMLElement
-  /** Last 5…1 digit already flashed (avoid repeat ticks). */
-  private lastEndCountdownDigit: number | null = null
-  /** Soft white flash hide timer (brush chance notice). */
-  private brushChanceFlashTimer: number | null = null
-  /** Banner auto-hide timer — cleared early on brush tap / miss / round end. */
-  private brushChanceBannerTimer: number | null = null
-  private mouthScene!: HTMLElement
-  private mouthBoard!: HTMLElement
-  private germs: GermController[] = []
-  private toothbrush!: ToothbrushController
-  private occupiedAnchors = new Set<string>()
-  private score = 0
-  private timeLeft: number = GAME.durationSec
-  private elapsedSec = 0
-  /** Remaining countdown in ms (wall-clock; paused while hidden or sweeping). */
-  private remainingMs: number = GAME.durationSec * 1000
-  /** Accumulated play time in ms (for toothbrush plan seconds). */
-  private elapsedMs = 0
-  private lastTimerNow: number | null = null
-  private timerId: number | null = null
-  private spawnTimer: number | null = null
-  private burstTimers: number[] = []
-  private sweepClearTimers: number[] = []
-  private sweepEndTimer: number | null = null
-  private sweepTrailTimer: number | null = null
-  private sweepTrailCleanup: number | null = null
-  /** Planned game-seconds (elapsed) when a toothbrush should appear. */
-  private toothbrushPlan: number[] = []
-  private sweeping = false
-  /**
-   * True from toothbrush prepare-window start until retreat/sweep ends.
-   * Temporarily allows concurrent germs up to toothbrushEnsureGerms.
-   */
-  private brushEnsure = false
-  private brushEnsureStartedAt = 0
-  private brushEnsureTimer: number | null = null
-  private brushEnsureTopUpTimers: number[] = []
-  /**
-   * While true, germ miss-dwell is frozen (prepare + brush idle).
-   * Cleared when sweep starts (no resume — sweep clears) or brush leaves without tap (resume).
-   */
-  private germMissFrozen = false
-  /** True while document is hidden during an active round (timer/spawner paused). */
-  private backgroundPaused = false
-  private screen: Screen = 'start'
-  /** Bumps each result screen so a late prior-round TOP3 sync cannot overwrite UI. */
-  private resultSyncGen = 0
-  /** Bumps on prefetch / result so late TOP3 GETs cannot clobber fresher cache. */
-  private top3PrefetchGen = 0
-  /**
-   * Warm pre-play TOP3 for instant result first paint (memory snapshot).
-   * Updated by prefetch / successful sync — never holds optimistic merges.
-   */
-  private warmTop3: Top3Scores | null = null
-  /** True after we prefetch once during the final 5s countdown this round. */
-  private endCountdownPrefetched = false
-  /**
-   * Result tip holds the retry-button slot for 5s so frantic taps don't skip the tip.
-   * During hold: pulse + black↔red text (CSS). Cleared on startRound / next endRound.
-   */
-  private retryRevealTimer: number | null = null
-  private onResize = (): void => {
-    layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-    this.fitHudBrand()
-    if (this.screen === 'start') this.fitStartEyebrow()
+html,
+body,
+#app {
+  margin: 0;
+  width: 100%;
+  /* % fallback, then svh/dvh so iOS Safari chrome doesn't clip the playfield. */
+  height: 100%;
+  height: 100svh;
+  height: 100dvh;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background:
+    radial-gradient(100% 70% at 50% 0%, #243248 0%, transparent 55%),
+    linear-gradient(180deg, #1a2434 0%, #0d121a 100%);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button {
+  font: inherit;
+  border: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.game-shell {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: max(8px, var(--safe-top)) 10px max(8px, var(--safe-bottom));
+}
+
+.phone-frame {
+  position: relative;
+  width: min(100%, 430px);
+  height: min(100%, 860px);
+  aspect-ratio: 9 / 19.5;
+  max-height: 100%;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  background: var(--cheek);
+  isolation: isolate;
+  container-type: size;
+  container-name: phone;
+  /* HUD clearance: actual height applied in JS; fallback keeps chips clear. */
+  --hud-offset: calc(5.75rem + var(--safe-top, 0px));
+  --hud-gap: 0px;
+  /* Germ size relative to the phone frame (same feel as 18vw on a real phone). */
+  --germ-size: 18cqw;
+  --toothbrush-size: 26cqw;
+}
+
+.hud {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  padding: calc(12px + var(--safe-top)) 12px 12px;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, var(--arcade-navy-2) 0%, var(--arcade-navy) 100%);
+  border-bottom: 2px solid var(--arcade-edge);
+  box-shadow:
+    0 6px 0 rgba(8, 12, 20, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0 2px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--cream);
+  text-shadow:
+    0 2px 0 #0a1018,
+    0 0 10px rgba(61, 255, 176, 0.18);
+  animation: brand-pop 700ms cubic-bezier(0.22, 1.2, 0.36, 1) both;
+}
+
+.brand__mark {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  object-fit: contain;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.35);
+}
+
+.brand__text {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 1rem;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+  text-align: left;
+  white-space: nowrap;
+  overflow: visible;
+}
+
+.hud__chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 52px;
+  padding: 4px 2px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.hud__score {
+  justify-self: end;
+  align-items: flex-end;
+  text-align: right;
+}
+
+.hud__label {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #8ea0b8;
+  text-transform: uppercase;
+}
+
+.hud__value {
+  font-family: var(--font-display);
+  font-size: 1.55rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--mint);
+  text-shadow: 0 0 10px rgba(61, 255, 176, 0.35);
+}
+
+.hud__score .hud__value {
+  color: var(--sun);
+  text-shadow: 0 0 10px rgba(255, 225, 74, 0.35);
+}
+
+.stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.mouth-scene {
+  position: absolute;
+  top: calc(var(--hud-offset) + var(--hud-gap, 0px));
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #ffa8ba;
+}
+
+.mouth-board {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  z-index: 1;
+  overflow: hidden;
+}
+
+/* User mouth background — fills play rect edge-to-edge (no letterbox). */
+.mouth-bg-user {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  object-position: center center;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Hide legacy chart / recomposed mouth layers. */
+.mouth-chart,
+.mouth-field,
+.mouth-field-art,
+.mouth-art,
+.mouth-bg {
+  display: none;
+}
+
+.float-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.germ {
+  position: absolute;
+  z-index: 3;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  width: var(--germ-size, 18cqw);
+  height: var(--germ-size, 18cqw);
+  min-width: 48px;
+  min-height: 48px;
+  will-change: transform, opacity;
+}
+
+.germ.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.germ__art {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter: drop-shadow(0 6px 0 rgba(42, 20, 32, 0.12));
+}
+
+.germ__shadow {
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  bottom: 4%;
+  height: 14%;
+  border-radius: 50%;
+  background: rgba(42, 20, 32, 0.18);
+  z-index: 0;
+}
+
+.germ.is-idle {
+  animation: germ-bounce 1.1s ease-in-out infinite;
+}
+
+.germ.is-idle .germ__art {
+  animation: germ-sway 1.8s ease-in-out infinite;
+}
+
+.germ.is-squashing .germ__art {
+  animation: germ-squash var(--squash-ms, 90ms) ease-out forwards;
+}
+
+.germ.is-popping .germ__art {
+  animation: germ-pop var(--pop-ms, 200ms) cubic-bezier(0.2, 1.2, 0.3, 1) forwards;
+}
+
+.germ.is-popping .germ__shadow {
+  animation: shadow-pop var(--pop-ms, 200ms) ease-out forwards;
+}
+
+/* Miss timeout “쏙” — shrink back into the tooth, no score. */
+.germ.is-retreating .germ__art {
+  animation: germ-retreat 220ms cubic-bezier(0.4, 0.0, 0.7, 0.2) forwards;
+}
+
+.germ.is-retreating .germ__shadow {
+  animation: shadow-retreat 220ms ease-in forwards;
+}
+
+.germ.is-retreating {
+  pointer-events: none;
+}
+
+/* During AOE sweep: freeze taps on play targets (HUD stays untouched). */
+.mouth-board.is-sweeping .germ,
+.mouth-board.is-sweeping .toothbrush {
+  pointer-events: none;
+}
+
+/* Bonus toothbrush pick-up — slightly larger than germs, sparkle/pulse only. */
+.toothbrush {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  /* Wide hit target matching ~2:1 brush art + a little tap padding. */
+  width: var(--toothbrush-size, 26cqw);
+  height: calc(var(--toothbrush-size, 26cqw) * 0.58);
+  min-width: 72px;
+  min-height: 44px;
+  padding: 10px;
+  box-sizing: content-box;
+  will-change: transform, filter;
+}
+
+.toothbrush.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.toothbrush__art {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  /* Soft lift so the brush reads off the pink mouth bg. */
+  filter: drop-shadow(0 7px 5px rgba(42, 20, 32, 0.34))
+    drop-shadow(0 2px 0 rgba(42, 20, 32, 0.16));
+}
+
+.toothbrush__glow {
+  position: absolute;
+  inset: -30%;
+  z-index: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 236, 110, 0.78) 0%,
+    rgba(255, 220, 70, 0.42) 34%,
+    rgba(80, 210, 255, 0.16) 58%,
+    transparent 74%
+  );
+  pointer-events: none;
+}
+
+.toothbrush__spark {
+  position: absolute;
+  z-index: 2;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ffe14a;
+  box-shadow: 0 0 8px rgba(255, 225, 74, 0.85);
+  pointer-events: none;
+}
+
+.toothbrush__spark--a {
+  top: 8%;
+  right: 12%;
+}
+
+.toothbrush__spark--b {
+  bottom: 18%;
+  left: 10%;
+  background: #7ae7ff;
+  box-shadow: 0 0 8px rgba(122, 231, 255, 0.85);
+}
+
+.toothbrush__spark--c {
+  top: 40%;
+  left: 55%;
+  width: 5px;
+  height: 5px;
+}
+
+.toothbrush.is-idle {
+  animation: toothbrush-pulse 0.95s ease-in-out infinite;
+}
+
+.toothbrush.is-idle .toothbrush__glow {
+  animation: toothbrush-glow 0.95s ease-in-out infinite;
+}
+
+.toothbrush.is-idle .toothbrush__spark--a {
+  animation: toothbrush-spark 0.9s ease-in-out infinite;
+}
+
+.toothbrush.is-idle .toothbrush__spark--b {
+  animation: toothbrush-spark 1.05s ease-in-out 0.15s infinite;
+}
+
+.toothbrush.is-idle .toothbrush__spark--c {
+  animation: toothbrush-spark 0.8s ease-in-out 0.28s infinite;
+}
+
+.toothbrush.is-retreating .toothbrush__art {
+  animation: germ-retreat 220ms cubic-bezier(0.4, 0, 0.7, 0.2) forwards;
+}
+
+.toothbrush.is-retreating .toothbrush__glow,
+.toothbrush.is-retreating .toothbrush__spark {
+  animation: shadow-retreat 220ms ease-in forwards;
+}
+
+.toothbrush.is-retreating {
+  pointer-events: none;
+}
+
+/* Large sweep brush — clipped to mouth-board (play area), never over HUD. */
+.sweep-brush {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 5;
+  width: var(--sweep-width, 78%);
+  height: auto;
+  aspect-ratio: 2 / 1;
+  transform: translate(-130%, -50%) rotate(-28deg);
+  pointer-events: none;
+  opacity: 0;
+}
+
+.sweep-brush.is-running {
+  animation: toothbrush-sweep var(--sweep-ms, 2200ms) cubic-bezier(0.22, 0.7, 0.28, 1) forwards;
+}
+
+.sweep-brush__art {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 10px 12px rgba(20, 30, 40, 0.28));
+}
+
+/* Soft glitter trail left on the play board behind the sweeping brush. */
+.sweep-trail {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.sweep-trail__s {
+  position: absolute;
+  width: var(--size, 6px);
+  height: var(--size, 6px);
+  margin: 0;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  animation: sweep-trail-twinkle var(--life, 560ms) ease-out forwards;
+  animation-delay: var(--delay, 0ms);
+  will-change: transform, opacity;
+}
+
+.sweep-trail__s--dot {
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff9d2 0%, #ffe14a 55%, transparent 78%);
+  box-shadow: 0 0 6px rgba(255, 225, 74, 0.45);
+}
+
+.sweep-trail__s--star {
+  background: #ffe566;
+  clip-path: polygon(
+    50% 0%,
+    61% 35%,
+    98% 35%,
+    68% 57%,
+    79% 91%,
+    50% 70%,
+    21% 91%,
+    32% 57%,
+    2% 35%,
+    39% 35%
+  );
+  box-shadow: 0 0 5px rgba(255, 236, 140, 0.4);
+}
+
+.sweep-trail__s--cross {
+  background: transparent;
+  box-shadow: none;
+}
+
+.sweep-trail__s--cross::before,
+.sweep-trail__s--cross::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  background: #b8f0ff;
+  border-radius: 1px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 4px rgba(170, 230, 255, 0.55);
+}
+
+.sweep-trail__s--cross::before {
+  width: 100%;
+  height: 2px;
+}
+
+.sweep-trail__s--cross::after {
+  width: 2px;
+  height: 100%;
+}
+
+/* Tap-catch firework burst — pointer-events none, self-removes in JS.
+   No onomatopoeia text — particles + colored +1 only. */
+.catch-fx {
+  position: absolute;
+  z-index: 6;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.catch-fx__p {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--size, 10px);
+  height: var(--size, 10px);
+  margin: 0;
+  pointer-events: none;
+  animation: catch-particle var(--catch-fx-ms, 420ms) cubic-bezier(0.15, 0.85, 0.25, 1) forwards;
+  animation-delay: var(--delay, 0ms);
+  will-change: transform, opacity;
+  /* Color from JS --p-color (yellow / orange / sky / green). */
+  background: var(--p-color, #ffd024);
+  box-shadow: 0 0 5px color-mix(in srgb, var(--p-color, #ffd024) 70%, transparent);
+}
+
+.catch-fx__p--circle {
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 30%,
+    color-mix(in srgb, var(--p-color, #ffd024) 72%, #ffe9a0) 0%,
+    var(--p-color, #ffd024) 55%,
+    color-mix(in srgb, var(--p-color, #ffd024) 75%, #c45a00) 100%
+  );
+}
+
+.catch-fx__p--star {
+  background: var(--p-color, #ffd024);
+  clip-path: polygon(
+    50% 0%,
+    61% 35%,
+    98% 35%,
+    68% 57%,
+    79% 91%,
+    50% 70%,
+    21% 91%,
+    32% 57%,
+    2% 35%,
+    39% 35%
+  );
+  filter: drop-shadow(0 0 2px color-mix(in srgb, var(--p-color, #ffd024) 80%, #1a2030));
+  box-shadow: none;
+}
+
+.catch-fx__p--spark {
+  border-radius: 999px;
+  width: calc(var(--size, 10px) * 0.45);
+  height: calc(var(--size, 10px) * 1.15);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--p-color, #5ee08a) 65%, #ffe08a) 0%,
+    var(--p-color, #5ee08a) 100%
+  );
+}
+
+.catch-fx__plus {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.7rem;
+  color: #ff8a1f;
+  -webkit-text-stroke: 1.5px #2a1420;
+  paint-order: stroke fill;
+  text-shadow:
+    0 2px 0 #2a1420,
+    1px 0 0 #2a1420,
+    -1px 0 0 #2a1420,
+    0 -1px 0 #2a1420,
+    0 0 10px rgba(255, 138, 31, 0.45);
+  animation: catch-plus-one var(--catch-plus-ms, 480ms) ease-out forwards;
+  z-index: 2;
+  white-space: nowrap;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(80% 55% at 50% 35%, rgba(61, 255, 176, 0.12), transparent 60%),
+    rgba(10, 16, 26, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.overlay[hidden] {
+  display: none !important;
+}
+
+/* Last-5s center countdown — taps pass through to germs. */
+.end-countdown {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  /* ~50–52% of the shorter phone-frame side — readable on mobile, stronger prep cue */
+  font-size: min(52cqmin, 52vmin);
+  line-height: 1;
+  /* Present enough for "mental prep" before result — not ghostly. */
+  color: rgba(255, 255, 255, 0.92);
+  text-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.55),
+    0 0 22px rgba(0, 0, 0, 0.45),
+    0 8px 28px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+}
+
+.end-countdown[hidden] {
+  display: none !important;
+}
+
+.end-countdown.is-tick {
+  animation: end-countdown-fade 700ms ease-out forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes end-countdown-fade {
+  0% {
+    opacity: 1;
+    transform: scale(1.14);
   }
-  private onVisibilityChange = (): void => {
-    this.handleVisibilityChange()
+  100% {
+    opacity: 0;
+    transform: scale(1);
   }
+}
 
-  /** Grow HUD brand type to fill the center strip (one line, no wrap). */
-  private fitHudBrand(): void {
-    const brand = this.root.querySelector<HTMLElement>('.brand')
-    const text = this.root.querySelector<HTMLElement>('.brand__text')
-    const mark = this.root.querySelector<HTMLElement>('.brand__mark')
-    if (!brand || !text) return
+/*
+ * Toothbrush chance notice — soft translucent white flash +「칫솔 찬스!」.
+ * pointer-events: none so germ / brush taps pass through. Does not scale the brush.
+ */
+.brush-chance-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  margin: 0;
+  /* Soft veil — not solid white */
+  background: rgba(255, 255, 255, 0.38);
+  opacity: 0;
+}
 
-    const brandWidth = brand.clientWidth
-    if (brandWidth <= 0) return
+.brush-chance-flash[hidden] {
+  display: none !important;
+}
 
-    const markW = mark?.getBoundingClientRect().width ?? 0
-    const gap = 6
-    const available = Math.max(40, brandWidth - markW - gap)
-    // Leave a little breathing room so it doesn't kiss the chips.
-    const target = available * 0.96
+.brush-chance-flash.is-flash {
+  animation: brush-chance-flash 280ms ease-out forwards;
+  will-change: opacity;
+}
 
-    let lo = 10
-    let hi = 22
-    let best = lo
-    text.style.letterSpacing = '-0.045em'
-    text.style.whiteSpace = 'nowrap'
-
-    for (let i = 0; i < 12; i++) {
-      const mid = (lo + hi) / 2
-      text.style.fontSize = `${mid}px`
-      const w = text.scrollWidth
-      if (w <= target) {
-        best = mid
-        lo = mid
-      } else {
-        hi = mid
-      }
-    }
-
-    text.style.fontSize = `${best.toFixed(2)}px`
-    if (mark) {
-      const markSize = Math.max(18, Math.min(28, best * 1.15))
-      mark.style.width = `${markSize}px`
-      mark.style.height = `${markSize}px`
-    }
+@keyframes brush-chance-flash {
+  0% {
+    opacity: 1;
   }
-
-  /** Scale start-panel eyebrow to the widest single line that fits the panel. */
-  private fitStartEyebrow(): void {
-    const panel = this.overlay.querySelector<HTMLElement>('.panel--start')
-    const eyebrow = this.overlay.querySelector<HTMLElement>('.panel__eyebrow')
-    if (!panel || !eyebrow || this.screen !== 'start') return
-
-    const styles = getComputedStyle(panel)
-    const padX =
-      (parseFloat(styles.paddingLeft) || 0) + (parseFloat(styles.paddingRight) || 0)
-    // Leave a couple px so glyphs don't kiss the border.
-    const available = Math.max(40, panel.clientWidth - padX - 4)
-    if (available <= 0) return
-
-    eyebrow.style.whiteSpace = 'nowrap'
-    eyebrow.style.letterSpacing = '-0.045em'
-    // Unconstrain while measuring — max-width:100% makes scrollWidth report the box, not the text.
-    eyebrow.style.maxWidth = 'none'
-    eyebrow.style.overflow = 'visible'
-    eyebrow.style.display = 'inline-block'
-
-    let lo = 14
-    let hi = 36
-    let best = lo
-    for (let i = 0; i < 16; i++) {
-      const mid = (lo + hi) / 2
-      eyebrow.style.fontSize = `${mid}px`
-      if (eyebrow.scrollWidth <= available) {
-        best = mid
-        lo = mid
-      } else {
-        hi = mid
-      }
-    }
-    eyebrow.style.fontSize = `${best.toFixed(2)}px`
-    eyebrow.style.maxWidth = '100%'
-    eyebrow.style.overflow = 'hidden'
-    eyebrow.style.display = ''
+  100% {
+    opacity: 0;
   }
+}
 
-  constructor(host: HTMLElement) {
-    this.root = document.createElement('div')
-    this.root.className = 'game-shell'
-    host.appendChild(this.root)
-    this.renderShell()
-    this.showStart()
+.brush-chance-banner {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Upper-center — clear of HUD, above board midline */
+  top: 22%;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  margin: 0;
+  padding: 0 16px;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: clamp(1.55rem, 7.5cqw, 2.15rem);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  text-align: center;
+  color: #ffffff;
+  text-shadow:
+    0 2px 0 #0a121c,
+    0 0 14px rgba(10, 18, 28, 0.45),
+    0 6px 18px rgba(10, 18, 28, 0.35);
+  opacity: 0;
+}
+
+.brush-chance-banner[hidden] {
+  display: none !important;
+}
+
+.brush-chance-banner.is-show {
+  animation: brush-chance-banner 1250ms ease-out forwards;
+  will-change: opacity, transform;
+}
+
+@keyframes brush-chance-banner {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.94);
   }
+  12% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  72% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-6px) scale(1);
+  }
+}
 
-  private renderShell(): void {
-    this.root.innerHTML = `
-      <div class="phone-frame">
-        <header class="hud" aria-live="polite">
-          <div class="hud__chip hud__time">
-            <span class="hud__label">시간</span>
-            <span class="hud__value" data-hud="time">${GAME.durationSec}</span>
-          </div>
-          <div class="brand" aria-label="미추홀구보건소와 함께 해요!">
-            <img
-              class="brand__mark"
-              src="${ASSETS.michuholMarkHud}"
-              width="128"
-              height="128"
-              alt=""
-              draggable="false"
-              decoding="async"
-            />
-            <span class="brand__text">미추홀구보건소와 함께 해요!</span>
-          </div>
-          <div class="hud__chip hud__score">
-            <span class="hud__label">점수</span>
-            <span class="hud__value" data-hud="score">0</span>
-          </div>
-        </header>
+.panel {
+  width: min(100%, 320px);
+  padding: 26px 22px 24px;
+  border-radius: 28px;
+  background:
+    linear-gradient(180deg, #ffffff 0%, #eef5ff 100%);
+  border: 3px solid var(--arcade-navy);
+  box-shadow:
+    0 8px 0 #0a121c,
+    0 18px 36px rgba(8, 14, 24, 0.35);
+  text-align: center;
+  animation: panel-in 420ms cubic-bezier(0.22, 1.15, 0.36, 1) both;
+}
 
-        <div class="stage" data-stage>
-          <div class="float-layer" data-float></div>
-        </div>
+/* Result grows for TOP3 + tip + retry without crushing lines. */
+.panel--result {
+  width: min(100%, 340px);
+  padding: 22px 20px 20px;
+  max-height: min(92%, 560px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
 
-        <div
-          class="end-countdown"
-          data-end-countdown
-          hidden
-          aria-hidden="true"
-        ></div>
+.panel__hero {
+  display: block;
+  width: min(42%, 148px);
+  height: auto;
+  aspect-ratio: 1 / 1;
+  margin: 0 auto 10px;
+  object-fit: contain;
+  filter: drop-shadow(0 8px 0 rgba(10, 18, 28, 0.2));
+  animation: hero-bob 1.4s ease-in-out infinite;
+  will-change: transform;
+  content-visibility: auto;
+}
 
-        <div
-          class="brush-chance-flash"
-          data-brush-flash
-          hidden
-          aria-hidden="true"
-        ></div>
-        <p
-          class="brush-chance-banner"
-          data-brush-banner
-          hidden
-          aria-hidden="true"
-        >칫솔 찬스!</p>
+.panel__eyebrow {
+  margin: 0 0 8px;
+  max-width: 100%;
+  /* JS fitStartEyebrow() scales this up to fill one line. */
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  color: #3d8f72;
+  white-space: nowrap;
+  overflow: hidden;
+  line-height: 1.15;
+}
 
-        <div class="overlay" data-overlay></div>
-      </div>
-    `
+.panel__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.1rem, 9.5vw, 2.75rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--arcade-navy);
+  line-height: 1.02;
+  text-shadow: 0 3px 0 rgba(61, 255, 176, 0.35);
+}
 
-    this.hud = this.root.querySelector('.hud')!
-    this.hudTime = this.root.querySelector('[data-hud="time"]')!
-    this.hudScore = this.root.querySelector('[data-hud="score"]')!
-    this.endCountdown = this.root.querySelector('[data-end-countdown]')!
-    this.brushChanceFlash = this.root.querySelector('[data-brush-flash]')!
-    this.brushChanceBanner = this.root.querySelector('[data-brush-banner]')!
-    this.overlay = this.root.querySelector('[data-overlay]')!
-    this.stage = this.root.querySelector('[data-stage]')!
+/* Result title must stay one line on portrait phone. */
+.panel--result .panel__title {
+  font-size: clamp(1.35rem, 6.2cqw, 1.85rem);
+  letter-spacing: -0.04em;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+}
 
-    const mouth = createMouthScene()
-    this.mouthScene = mouth
-    this.stage.insertBefore(mouth, this.stage.firstChild)
-    this.mouthBoard = getMouthBoard(mouth)
-    layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-    window.addEventListener('resize', this.onResize)
-    document.addEventListener('visibilitychange', this.onVisibilityChange)
+.panel__copy,
+.panel__score {
+  margin: 12px 0 14px;
+  font-size: 1.02rem;
+  font-weight: 700;
+  color: var(--ink-soft);
+  line-height: 1.45;
+}
 
-    const floatLayer = this.root.querySelector('[data-float]') as HTMLElement
-    // Pool must cover temporary toothbrush ensure cap (e.g. 5), not only normal WAM.
-    const poolSize = Math.max(1, GAME.concurrentGerms, GAME.toothbrushEnsureGerms)
-    for (let i = 0; i < poolSize; i++) {
-      this.germs.push(
-        new GermController(
-          this.mouthBoard,
-          floatLayer,
-          {
-            onCaught: () => this.handleCatch(),
-            onPopComplete: (germ) => this.handleSlotFree(germ),
-            onMissComplete: (germ) => this.handleSlotFree(germ),
-          },
-          i * 40,
-        ),
+.panel--result .panel__score {
+  margin: 8px 0 10px;
+}
+
+.panel__load-status {
+  margin: 0 0 12px;
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #c23b3b;
+  text-align: center;
+}
+
+.panel__load-status[hidden] {
+  display: none;
+}
+
+.panel--start .panel__copy {
+  margin-bottom: 8px;
+}
+
+.panel__hint {
+  margin: 0 0 18px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.92rem;
+  font-weight: 800;
+  color: #152536;
+  line-height: 1.4;
+  /* Soft yellow→mint strip behind hint only — not a full card. */
+  background: linear-gradient(
+    90deg,
+    rgba(255, 225, 74, 0.42) 0%,
+    rgba(61, 255, 176, 0.28) 100%
+  );
+  animation: hint-pulse 1.35s ease-in-out infinite;
+}
+
+.panel__hint-label {
+  display: inline-block;
+  margin-right: 4px;
+  color: #e6a800;
+  font-weight: 900;
+  text-shadow: 0 0 10px rgba(255, 225, 74, 0.55);
+}
+
+@keyframes hint-pulse {
+  0%,
+  100% {
+    opacity: 0.88;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.02);
+  }
+}
+
+.panel__score span {
+  display: inline-block;
+  font-family: var(--font-display);
+  font-size: 2.4rem;
+  font-weight: 700;
+  color: #12a874;
+  margin: 0 4px;
+  vertical-align: -4px;
+}
+
+/*
+ * Tip style A — soft mint–yellow highlight band (not a CTA).
+ * Emphasized readable tip: navy/bold, slight radius, no pulse / button shadow.
+ */
+.panel__tip {
+  margin: 10px 0 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-family: var(--font-body);
+  font-size: clamp(0.98rem, 3.8vw, 1.08rem);
+  font-weight: 800;
+  line-height: 1.4;
+  letter-spacing: -0.02em;
+  color: var(--arcade-navy);
+  background: linear-gradient(
+    90deg,
+    rgba(61, 255, 176, 0.38) 0%,
+    rgba(255, 225, 74, 0.48) 55%,
+    rgba(255, 241, 160, 0.42) 100%
+  );
+  border: none;
+  box-shadow: none;
+  pointer-events: none;
+  user-select: none;
+  box-sizing: border-box;
+  transition:
+    min-height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * Result tip holds the retry-button slot for 5s (JS: panel__tip--holding).
+ * Band expands to tip + gap + btn height so layout doesn't jump when retry appears.
+ * While holding: pulse + text color black ↔ red (style A band bg stays).
+ * Removing --holding stops the animation (retry button then appears).
+ */
+.panel__tip--holding {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* ~2-line tip + pad + usual tip→btn gap(16) + retry min-height(58) */
+  min-height: calc(2.8em + 20px + 16px + 58px);
+  margin-bottom: 0;
+  padding-top: 14px;
+  padding-bottom: 14px;
+  animation: tip-hold-attention 0.85s ease-in-out infinite;
+  will-change: transform, color;
+}
+
+@keyframes tip-hold-attention {
+  0%,
+  100% {
+    color: #000000;
+    transform: scale(1);
+  }
+  50% {
+    color: #e01020;
+    transform: scale(1.035);
+  }
+}
+
+.panel--result .btn[data-action='retry'][hidden] {
+  display: none !important;
+}
+
+/* Anonymous TOP3 — occupies former tip slot above the educational tip. */
+.panel__top3 {
+  margin: 2px 0 4px;
+  padding: 10px 12px 12px;
+  border-radius: 12px;
+  background: rgba(20, 28, 40, 0.04);
+  text-align: center;
+}
+
+.panel__top3[hidden] {
+  display: none !important;
+}
+
+.panel__top3-title {
+  margin: 0 0 8px;
+  font-family: var(--font-display);
+  font-size: clamp(1.05rem, 4.2vw, 1.2rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--arcade-navy);
+  line-height: 1.2;
+}
+
+.panel__top3-line {
+  margin: 0;
+  padding: 2px 0;
+  font-family: var(--font-body);
+  font-size: clamp(1rem, 4vw, 1.12rem);
+  font-weight: 800;
+  color: #152536;
+  line-height: 1.45;
+}
+
+.panel__top3--loading .panel__top3-line {
+  opacity: 0.45;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 58px;
+  min-width: 200px;
+  padding: 0 30px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffe96a 0%, var(--sun) 48%, #f0b420 100%);
+  color: var(--arcade-navy);
+  font-family: var(--font-display);
+  font-size: 1.28rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 3px solid var(--arcade-navy);
+  box-shadow:
+    0 6px 0 #0a121c,
+    0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.btn:active {
+  transform: translateY(4px);
+  box-shadow:
+    0 2px 0 #0a121c,
+    0 0 0 1px rgba(255, 255, 255, 0.25) inset;
+}
+
+.btn.btn--gated,
+.btn:disabled {
+  cursor: not-allowed;
+  pointer-events: none;
+  opacity: 0.48;
+  filter: grayscale(0.35) brightness(0.92);
+  box-shadow:
+    0 4px 0 #0a121c,
+    0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+  transform: none;
+}
+
+/* Attention pulse on result retry — runs until the button is pressed. */
+.btn.btn--pulse {
+  animation: btn-attention-pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes btn-attention-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+    box-shadow:
+      0 6px 0 #0a121c,
+      0 0 0 1px rgba(255, 255, 255, 0.25) inset,
+      0 0 0 0 rgba(255, 225, 74, 0);
+  }
+  50% {
+    transform: scale(1.045);
+    filter: brightness(1.08);
+    box-shadow:
+      0 6px 0 #0a121c,
+      0 0 0 1px rgba(255, 255, 255, 0.25) inset,
+      0 0 18px 4px rgba(255, 209, 70, 0.55);
+  }
+}
+
+@keyframes toothbrush-pulse {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) scale(1) rotate(-6deg);
+    filter: brightness(1);
+  }
+  50% {
+    transform: translate(-50%, -50%) scale(1.08) rotate(4deg);
+    filter: brightness(1.12);
+  }
+}
+
+@keyframes toothbrush-glow {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes toothbrush-spark {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.6);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes toothbrush-sweep {
+  0% {
+    opacity: 0;
+    transform: translate(-130%, -50%) rotate(-28deg);
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(130%, -42%) rotate(-18deg);
+  }
+}
+
+@keyframes sweep-trail-twinkle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.35);
+  }
+  18% {
+    opacity: 0.95;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--drift-x, -12px)),
+        calc(-50% + var(--drift-y, 0px))
       )
-    }
-    this.toothbrush = new ToothbrushController(this.mouthBoard, {
-      onActivated: () => this.beginToothbrushSweep(),
-      onMissComplete: (item) => {
-        this.clearBrushChanceNotice()
-        this.releaseAnchor(item.anchorId)
-        this.endBrushEnsure()
-      },
-    })
-    this.hideAllGerms()
-    requestAnimationFrame(() => this.fitHudBrand())
+      scale(0.4);
+  }
+}
+
+@keyframes germ-bounce {
+  0%,
+  100% {
+    transform: translate(-50%, -50%) translateY(0);
+  }
+  50% {
+    transform: translate(-50%, -50%) translateY(-10px);
+  }
+}
+
+@keyframes germ-sway {
+  0%,
+  100% {
+    transform: rotate(-4deg) scale(1);
+  }
+  50% {
+    transform: rotate(5deg) scale(1.03);
+  }
+}
+
+@keyframes germ-squash {
+  0% {
+    transform: scale(1, 1);
+  }
+  100% {
+    transform: scale(1.28, 0.62) translateY(18%);
+  }
+}
+
+@keyframes germ-pop {
+  0% {
+    transform: scale(1.18, 0.72);
+    opacity: 1;
+    filter: drop-shadow(0 6px 0 rgba(42, 20, 32, 0.12));
+  }
+  35% {
+    transform: scale(1.22, 1.22);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.15, 0.15);
+    opacity: 0;
+    filter: drop-shadow(0 0 0 transparent);
+  }
+}
+
+@keyframes shadow-pop {
+  to {
+    opacity: 0;
+    transform: scaleX(0.2);
+  }
+}
+
+@keyframes germ-retreat {
+  0% {
+    transform: scale(1, 1) translateY(0);
+    opacity: 1;
+  }
+  55% {
+    transform: scale(0.72, 0.55) translateY(18%);
+    opacity: 0.85;
+  }
+  100% {
+    transform: scale(0.15, 0.08) translateY(55%);
+    opacity: 0;
+  }
+}
+
+@keyframes shadow-retreat {
+  to {
+    opacity: 0;
+    transform: scaleX(0.15);
+  }
+}
+
+@keyframes catch-particle {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.3) rotate(0deg);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.15) rotate(calc(var(--spin, 0deg) * 0.25));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        calc(-50% + var(--dx, 0px)),
+        calc(-50% + var(--dy, 0px))
+      )
+      scale(0.45)
+      rotate(var(--spin, 40deg));
+  }
+}
+
+@keyframes catch-plus-one {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -30%) scale(0.65);
+  }
+  18% {
+    opacity: 1;
+    transform: translate(-50%, -55%) scale(var(--catch-plus-scale, 1.28));
+  }
+  100% {
+    opacity: 0;
+    transform: translate(
+        -50%,
+        calc(-30% - var(--catch-plus-rise, 78px))
+      )
+      scale(1.05);
+  }
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes brand-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hero-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-3deg);
+  }
+  50% {
+    transform: translateY(-8px) rotate(3deg);
+  }
+}
+
+@media (min-width: 700px) {
+  .phone-frame {
+    border: 3px solid rgba(255, 247, 240, 0.35);
+  }
+}
+
+@media (max-height: 700px) {
+  .brand {
+    gap: 4px;
   }
 
-  private showStart(): void {
-    this.screen = 'start'
-    this.stopTimer()
-    this.stopSpawner()
-    this.hideAllGerms()
-    this.overlay.hidden = false
-    this.overlay.innerHTML = `
-      <div class="panel panel--start">
-        <img
-          class="panel__hero"
-          src="${ASSETS.germHero}"
-          width="320"
-          height="320"
-          alt=""
-          draggable="false"
-          decoding="async"
-          fetchpriority="high"
-        />
-        <p class="panel__eyebrow">미추홀구보건소와 함께하는</p>
-        <h1 class="panel__title">탭탭! 30초 미션</h1>
-        <p class="panel__copy">입속에 나타난 충치균을<br />톡톡 잡아보세요!</p>
-        <p class="panel__hint" aria-label="힌트">
-          <span class="panel__hint-label">💡 힌트!</span>
-          반짝이는 칫솔이 나오면 톡!<br />쓸고 지나가며 충치균을 잡아요!
-        </p>
-        <p class="panel__load-status" data-load-status hidden></p>
-        <button type="button" class="btn btn--gated" data-action="start" disabled aria-disabled="true">
-          불러오는 중…
-        </button>
-      </div>
-    `
-    const startBtn = this.overlay.querySelector<HTMLButtonElement>('[data-action="start"]')!
-    const loadStatus = this.overlay.querySelector<HTMLElement>('[data-load-status]')!
-    let assetsReady = false
-
-    const enableStart = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = true
-      loadStatus.hidden = true
-      loadStatus.textContent = ''
-      startBtn.disabled = false
-      startBtn.removeAttribute('aria-disabled')
-      startBtn.classList.remove('btn--gated')
-      startBtn.dataset.action = 'start'
-      startBtn.textContent = '시작하기'
-    }
-
-    const showLoadFailure = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = false
-      loadStatus.hidden = false
-      loadStatus.textContent = '이미지를 불러오지 못했어요. 다시 시도해 주세요.'
-      startBtn.disabled = false
-      startBtn.removeAttribute('aria-disabled')
-      startBtn.classList.remove('btn--gated')
-      startBtn.dataset.action = 'retry-assets'
-      startBtn.textContent = '다시 불러오기'
-    }
-
-    const showLoading = (): void => {
-      if (this.screen !== 'start') return
-      assetsReady = false
-      loadStatus.hidden = true
-      loadStatus.textContent = ''
-      startBtn.disabled = true
-      startBtn.setAttribute('aria-disabled', 'true')
-      startBtn.classList.add('btn--gated')
-      startBtn.dataset.action = 'start'
-      startBtn.textContent = '불러오는 중…'
-    }
-
-    startBtn.addEventListener('click', () => {
-      if (startBtn.disabled) return
-      if (startBtn.dataset.action === 'retry-assets') {
-        showLoading()
-        void retryCriticalAssets().then(enableStart).catch(showLoadFailure)
-        return
-      }
-      if (!assetsReady) return
-      this.startRound()
-    })
-
-    // Prefetch server TOP3 into session/memory so first-play and post-reset
-    // optimistic boards are not stale (sheet clear → [0,0,0] before play).
-    this.prefetchTop3Cache()
-
-    void whenCriticalAssetsReady()
-      .then(() => {
-        enableStart()
-        // Dev helper: `?result=1` jumps to the result panel for TOP3/tip proof.
-        if (
-          import.meta.env.DEV &&
-          new URLSearchParams(location.search).has('result')
-        ) {
-          this.score = 12
-          this.endRound()
-        }
-      })
-      .catch(showLoadFailure)
-
-    requestAnimationFrame(() => {
-      this.fitStartEyebrow()
-      requestAnimationFrame(() => this.fitStartEyebrow())
-    })
+  .brand__mark {
+    width: 1.2rem;
+    height: 1.2rem;
   }
 
-  /**
-   * Refresh TOP3 cache from server (start panel + each round start + final 5s).
-   * Never paints UI — only warms sessionStorage/memory for optimistic merge.
-   * Late responses are dropped if a newer prefetch/result already advanced gen.
-   */
-  private prefetchTop3Cache(): void {
-    // Seed warm snapshot from whatever cache we already have (session/memory).
-    const seeded = getCachedTop3()
-    if (seeded) this.warmTop3 = seeded
-
-    const gen = ++this.top3PrefetchGen
-    const expectSeq = currentTop3CacheSeq()
-    void fetchSheetsTop3({ expectSeq })
-      .then((top3) => {
-        if (!top3) return
-        if (gen !== this.top3PrefetchGen) return
-        // Result sync owns cache during the result screen.
-        if (this.screen === 'result') return
-        this.warmTop3 = top3
-      })
-      .catch(() => {
-        // Prefetch is best-effort — game must not depend on Sheets.
-      })
+  .brand__text {
+    font-size: clamp(0.54rem, 2.3cqw, 0.74rem);
+    letter-spacing: -0.05em;
   }
 
-  private clearRetryRevealTimer(): void {
-    if (this.retryRevealTimer !== null) {
-      window.clearTimeout(this.retryRevealTimer)
-      this.retryRevealTimer = null
-    }
+  .hud__chip {
+    min-width: 56px;
+    padding: 2px 0;
   }
 
-  private startRound(): void {
-    this.screen = 'playing'
-    this.endCountdownPrefetched = false
-    this.clearRetryRevealTimer()
-    this.clearBrushChanceNotice()
-    // Retry skips the start panel — refresh cache before this round's optimistic.
-    this.prefetchTop3Cache()
-    this.score = 0
-    this.timeLeft = GAME.durationSec
-    this.elapsedSec = 0
-    this.remainingMs = GAME.durationSec * 1000
-    this.elapsedMs = 0
-    this.backgroundPaused = false
-    this.sweeping = false
-    this.endBrushEnsure(false)
-    this.mouthBoard.classList.remove('is-sweeping')
-    this.clearSweepRuntime()
-    this.planToothbrushSpawns()
-    this.clearEndCountdown()
-    this.hudScore.textContent = '0'
-    this.hudTime.textContent = String(this.timeLeft)
-    // Dev helper: `?endcd=1` starts near the final 5s flash.
-    if (
-      import.meta.env.DEV &&
-      new URLSearchParams(location.search).has('endcd')
-    ) {
-      this.remainingMs = 5500
-      this.timeLeft = Math.ceil(this.remainingMs / 1000)
-      this.hudTime.textContent = String(this.timeLeft)
-    }
-    this.overlay.hidden = true
-    this.overlay.innerHTML = ''
-    this.stopSpawner()
-    this.hideAllGerms()
-    this.startTimer()
-    // Playing UI can show immediately, but hold WAM until mouth BG is painted/ready.
-    void whenMouthBackgroundReady().then(() => {
-      if (this.screen !== 'playing') return
-      requestAnimationFrame(() => {
-        layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
-        requestAnimationFrame(() => {
-          if (this.screen === 'playing' && !this.sweeping && !document.hidden) {
-            this.startSpawner()
-          }
-        })
-      })
-    })
+  .hud__value {
+    font-size: 1.25rem;
   }
 
-  /**
-   * Wall-clock countdown: accumulates with performance.now(), pauses while
-   * sweeping or document.hidden so background/lock doesn't skew the 30s.
-   */
-  private startTimer(): void {
-    this.stopTimer(false)
-    this.lastTimerNow = performance.now()
-    this.timerId = window.setInterval(() => this.syncTimerFromClock(), 100)
+  .panel__hero {
+    width: min(34%, 112px);
   }
 
-  private stopTimer(flush = true): void {
-    if (flush) this.flushTimerClock()
-    if (this.timerId !== null) {
-      window.clearInterval(this.timerId)
-      this.timerId = null
-    }
-    this.lastTimerNow = null
+  .panel--result {
+    padding: 16px 16px 14px;
   }
 
-  private flushTimerClock(): void {
-    if (this.lastTimerNow === null || this.sweeping || this.backgroundPaused) return
-    const now = performance.now()
-    const dt = Math.max(0, now - this.lastTimerNow)
-    this.lastTimerNow = now
-    this.remainingMs = Math.max(0, this.remainingMs - dt)
-    this.elapsedMs += dt
-    this.applyTimerDisplay()
+  .panel--result .panel__score {
+    margin: 6px 0 8px;
   }
 
-  private syncTimerFromClock(): void {
-    if (this.screen !== 'playing' || this.sweeping || this.backgroundPaused) return
-    if (document.hidden) return
-    this.flushTimerClock()
-    if (this.remainingMs <= 0) {
-      this.endRound()
-    }
+  .panel__top3 {
+    padding: 8px 10px 10px;
   }
 
-  private applyTimerDisplay(): void {
-    const timeLeft = Math.max(0, Math.ceil(this.remainingMs / 1000))
-    const elapsedSec = Math.min(
-      GAME.durationSec,
-      Math.floor(this.elapsedMs / 1000),
-    )
-    if (timeLeft !== this.timeLeft) {
-      this.timeLeft = timeLeft
-      this.hudTime.textContent = String(this.timeLeft)
-      // Final 5s: flash 5→1 only (no 0 / 끝!). Taps still hit germs.
-      if (timeLeft >= 1 && timeLeft <= 5) {
-        this.flashEndCountdown(timeLeft)
-        // Warm TOP3 once during countdown so result first paint has numbers
-        // without waiting on a network round-trip at endRound.
-        if (timeLeft === 5 && !this.endCountdownPrefetched) {
-          this.endCountdownPrefetched = true
-          this.prefetchTop3Cache()
-        }
-      }
-    }
-    if (elapsedSec > this.elapsedSec) {
-      // Catch up toothbrush plans if multiple seconds advanced in one resume.
-      for (let sec = this.elapsedSec + 1; sec <= elapsedSec; sec++) {
-        this.elapsedSec = sec
-        this.trySpawnToothbrushForElapsed()
-      }
-    }
+  .panel__tip {
+    margin: 8px 0 12px;
+    padding: 8px 10px;
+    font-size: clamp(0.92rem, 3.5vw, 1.02rem);
   }
 
-  /** Center flash for the last 5 seconds — pointer-events none, fade ~0.7s. */
-  private flashEndCountdown(digit: number): void {
-    if (digit < 1 || digit > 5) return
-    if (this.lastEndCountdownDigit === digit) return
-    this.lastEndCountdownDigit = digit
-    const el = this.endCountdown
-    el.textContent = String(digit)
-    el.hidden = false
-    el.classList.remove('is-tick')
-    // Restart CSS animation for each new second.
-    void el.offsetWidth
-    el.classList.add('is-tick')
+  .panel__tip--holding {
+    /* gap 12 + btn 52 on narrow result padding */
+    min-height: calc(2.8em + 16px + 12px + 52px);
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
 
-  private clearEndCountdown(): void {
-    this.lastEndCountdownDigit = null
-    this.endCountdown.classList.remove('is-tick')
-    this.endCountdown.textContent = ''
-    this.endCountdown.hidden = true
-  }
-
-  private handleVisibilityChange(): void {
-    if (this.screen !== 'playing') return
-    if (document.hidden) {
-      if (this.backgroundPaused) return
-      // Flush remaining time before pausing the clock.
-      this.flushTimerClock()
-      this.backgroundPaused = true
-      this.lastTimerNow = null
-      // Freeze new waves while backgrounded (dwell timers on live germs unchanged).
-      this.stopSpawner()
-      return
-    }
-    if (!this.backgroundPaused) return
-    this.backgroundPaused = false
-    if (this.sweeping) return
-    this.lastTimerNow = performance.now()
-    this.syncTimerFromClock()
-    if (this.screen === 'playing' && !this.sweeping) {
-      this.startSpawner()
-    }
-  }
-
-  /** Plan ~1–2 bonus appearances in the mid-round window (game-time seconds). */
-  private planToothbrushSpawns(): void {
-    // Dev helper: `?brush=1` forces an early spawn for local proof/recording.
-    if (import.meta.env.DEV && new URLSearchParams(location.search).has('brush')) {
-      this.toothbrushPlan = [2]
-      return
-    }
-    const count = randInt(
-      GAME.toothbrushSpawnsPerGameMin,
-      GAME.toothbrushSpawnsPerGameMax,
-    )
-    const earliest = GAME.toothbrushSpawnEarliestSec
-    const latest = Math.min(GAME.toothbrushSpawnLatestSec, GAME.durationSec - 3)
-    const gap = GAME.toothbrushSpawnGapSec
-    const times: number[] = []
-    for (let n = 0; n < count; n++) {
-      let placed = false
-      for (let attempt = 0; attempt < 24; attempt++) {
-        const t = randInt(earliest, latest)
-        if (times.every((other) => Math.abs(other - t) >= gap)) {
-          times.push(t)
-          placed = true
-          break
-        }
-      }
-      if (!placed && times.length === 0) {
-        times.push(Math.round((earliest + latest) / 2))
-      }
-    }
-    this.toothbrushPlan = times.sort((a, b) => a - b)
-  }
-
-  private trySpawnToothbrushForElapsed(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (!this.toothbrushPlan.includes(this.elapsedSec)) return
-    // Drop this planned slot if the previous bonus is still on screen / preparing.
-    if (this.toothbrush.isActive || this.brushEnsure) return
-    this.beginToothbrushEnsure()
-  }
-
-  /**
-   * Prepare window before a planned toothbrush spawn:
-   * freeze miss-despawn, fill aggressively to toothbrushEnsureGerms, then spawn.
-   * Prefer not spawning until target; after wait cap, keep filling briefly while
-   * free anchors remain, then best-effort spawn.
-   */
-  private beginToothbrushEnsure(): void {
-    if (this.screen !== 'playing' || this.sweeping || this.brushEnsure) return
-    if (this.toothbrush.isActive) return
-    this.brushEnsure = true
-    this.brushEnsureStartedAt = performance.now()
-    this.germMissFrozen = true
-    this.freezeActiveGermMissDwells()
-    this.tickToothbrushEnsure()
-  }
-
-  private freezeActiveGermMissDwells(): void {
-    for (const germ of this.germs) {
-      if (germ.isActive) germ.freezeMissDwell()
-    }
-  }
-
-  /** End freeze and optionally restart normal miss dwells on idle germs. */
-  private clearGermMissFreeze(resumeDwells: boolean): void {
-    this.germMissFrozen = false
-    if (!resumeDwells) return
-    for (const germ of this.germs) {
-      if (germ.germState === 'idle') germ.resumeMissDwell()
-    }
-  }
-
-  private hasFreeGermAnchor(): boolean {
-    return SPAWN_ANCHORS.some((a) => !this.occupiedAnchors.has(a.id))
-  }
-
-  private tickToothbrushEnsure(): void {
-    this.brushEnsureTimer = null
-    if (!this.brushEnsure) return
-    if (this.screen !== 'playing' || this.sweeping) {
-      this.endBrushEnsure()
-      return
-    }
-    if (this.toothbrush.isActive) return
-
-    const target = GAME.toothbrushEnsureGerms
-    const active = this.countActiveGerms()
-    const waited = performance.now() - this.brushEnsureStartedAt
-    const waitCap = GAME.toothbrushEnsureWaitMs
-    /** Brief extra fill after wait cap while free anchors still exist. */
-    const fillGraceMs = 600
-
-    const trySpawnBrush = (): boolean => {
-      this.spawnToothbrush()
-      if (this.toothbrush.isActive) {
-        // Cap + miss-freeze stay until retreat / sweep.
-        this.clearBrushEnsureTimersOnly()
-        return true
-      }
-      return false
-    }
-
-    if (active >= target) {
-      if (trySpawnBrush()) return
-      // Need a free anchor for the brush — keep trying briefly.
-      if (waited < waitCap + fillGraceMs) {
-        this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), 80)
-        return
-      }
-      this.endBrushEnsure()
-      return
-    }
-
-    // Under target: fill aggressively (batch up to all missing).
-    const missing = target - active
-    const batch = Math.min(
-      missing,
-      randInt(GAME.toothbrushEnsureTopUpMin, GAME.toothbrushEnsureTopUpMax),
-    )
-    const canFill = batch > 0 && this.hasFreeGermAnchor()
-    if (canFill) {
-      for (let i = 0; i < batch; i++) {
-        if (i === 0) {
-          this.spawnOneGerm()
-        } else {
-          const id = window.setTimeout(() => {
-            this.brushEnsureTopUpTimers = this.brushEnsureTopUpTimers.filter((t) => t !== id)
-            if (this.brushEnsure && this.screen === 'playing' && !this.sweeping) {
-              this.spawnOneGerm()
-            }
-          }, i * GAME.burstGapMs)
-          this.brushEnsureTopUpTimers.push(id)
-        }
-      }
-    }
-
-    // Prefer not spawning until target, unless wait cap hit AND (no free anchors
-    // or fill-grace after cap exhausted).
-    const pastCap = waited >= waitCap
-    const pastGrace = waited >= waitCap + fillGraceMs
-    const noRoom = !this.hasFreeGermAnchor()
-    if (pastCap && (noRoom || pastGrace)) {
-      if (trySpawnBrush()) return
-      if (!pastGrace) {
-        this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), 80)
-        return
-      }
-      this.endBrushEnsure()
-      return
-    }
-
-    const nextDelay = canFill
-      ? Math.max(120, batch * GAME.burstGapMs + 60)
-      : 80
-    this.brushEnsureTimer = window.setTimeout(() => this.tickToothbrushEnsure(), nextDelay)
-  }
-
-  /** Clear prepare timers but keep elevated concurrent until brush lifecycle ends. */
-  private clearBrushEnsureTimersOnly(): void {
-    if (this.brushEnsureTimer !== null) {
-      window.clearTimeout(this.brushEnsureTimer)
-      this.brushEnsureTimer = null
-    }
-    for (const id of this.brushEnsureTopUpTimers) window.clearTimeout(id)
-    this.brushEnsureTopUpTimers = []
-  }
-
-  /**
-   * Restore normal concurrentGerms after toothbrush retreat / sweep / round end.
-   * Brush miss (no tap): resume germ miss dwells. Sweep path clears freeze without resume.
-   */
-  private endBrushEnsure(resumeGermDwells = true): void {
-    this.clearBrushEnsureTimersOnly()
-    this.brushEnsure = false
-    this.brushEnsureStartedAt = 0
-    if (this.germMissFrozen) {
-      this.clearGermMissFreeze(resumeGermDwells && !this.sweeping)
-    }
-  }
-
-  /** Concurrent cap: normal WAM 4, or ensure target while preparing / brush active / sweep. */
-  private effectiveConcurrentGerms(): number {
-    if (this.brushEnsure || this.toothbrush?.isActive || this.sweeping) {
-      return GAME.toothbrushEnsureGerms
-    }
-    return GAME.concurrentGerms
-  }
-
-  private spawnToothbrush(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (this.toothbrush.isActive) return
-
-    const avoid = this.toothbrush.anchorId
-    const anchor = this.pickFreeAnchor(avoid)
-    if (!anchor) return
-
-    this.occupiedAnchors.add(anchor.id)
-    const mapped = mapImagePercentToBoard(this.mouthBoard, anchor.x, anchor.y)
-    this.toothbrush.placeAt({ ...anchor, x: mapped.x, y: mapped.y })
-    // Soft flash +「칫솔 찬스!」— brush size unchanged; taps pass through notice.
-    if (this.toothbrush.isActive) this.showBrushChanceNotice()
-  }
-
-  /**
-   * Soft translucent white flash + upper-center「칫솔 찬스!」when the bonus brush appears.
-   * pointer-events: none (CSS) so germ tapping continues. Dismiss banner early on
-   * brush tap / miss / round end — do not scale the toothbrush itself.
-   */
-  private showBrushChanceNotice(): void {
-    this.clearBrushChanceNotice()
-
-    const flash = this.brushChanceFlash
-    flash.hidden = false
-    flash.classList.remove('is-flash')
-    void flash.offsetWidth
-    flash.classList.add('is-flash')
-    // Match CSS flash duration (~0.28s) then hide so [hidden] wins next spawn.
-    this.brushChanceFlashTimer = window.setTimeout(() => {
-      this.brushChanceFlashTimer = null
-      flash.classList.remove('is-flash')
-      flash.hidden = true
-    }, 300)
-
-    const banner = this.brushChanceBanner
-    banner.hidden = false
-    banner.classList.remove('is-show')
-    void banner.offsetWidth
-    banner.classList.add('is-show')
-    // ~1.25s hold, or until brush tapped / miss / round teardown.
-    this.brushChanceBannerTimer = window.setTimeout(() => {
-      this.brushChanceBannerTimer = null
-      banner.classList.remove('is-show')
-      banner.hidden = true
-    }, 1250)
-  }
-
-  private clearBrushChanceNotice(): void {
-    if (this.brushChanceFlashTimer !== null) {
-      window.clearTimeout(this.brushChanceFlashTimer)
-      this.brushChanceFlashTimer = null
-    }
-    if (this.brushChanceBannerTimer !== null) {
-      window.clearTimeout(this.brushChanceBannerTimer)
-      this.brushChanceBannerTimer = null
-    }
-    if (this.brushChanceFlash) {
-      this.brushChanceFlash.classList.remove('is-flash')
-      this.brushChanceFlash.hidden = true
-    }
-    if (this.brushChanceBanner) {
-      this.brushChanceBanner.classList.remove('is-show')
-      this.brushChanceBanner.hidden = true
-    }
-  }
-
-  private beginToothbrushSweep(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    this.clearBrushChanceNotice()
-    this.sweeping = true
-    this.mouthBoard.classList.add('is-sweeping')
-    this.clearBrushEnsureTimersOnly()
-    // Freeze window ends at sweep start — do not resume dwells (forceCatch clears).
-    this.clearGermMissFreeze(false)
-    this.releaseAnchor(this.toothbrush.anchorId)
-    this.toothbrush.hide()
-
-    // Pause countdown + stop new germ waves for the sweep only.
-    this.stopTimer()
-    this.stopSpawner()
-
-    const targets = this.germs
-      .filter((g) => g.isActive)
-      .sort((a, b) => a.boardPos.x - b.boardPos.x || a.boardPos.y - b.boardPos.y)
-
-    this.playSweepBrush()
-
-    const sweepMs = GAME.toothbrushSweepMs
-    const startFrac = GAME.toothbrushSweepClearStart
-    const endFrac = GAME.toothbrushSweepClearEnd
-    const windowMs = Math.max(0, (endFrac - startFrac) * sweepMs)
-    const stagger =
-      targets.length <= 1 ? 0 : windowMs / (targets.length - 1)
-
-    for (let i = 0; i < targets.length; i++) {
-      const germ = targets[i]!
-      const delay = Math.round(startFrac * sweepMs + i * stagger)
-      const id = window.setTimeout(() => {
-        this.sweepClearTimers = this.sweepClearTimers.filter((t) => t !== id)
-        if (this.screen !== 'playing') return
-        germ.forceCatch()
-      }, delay)
-      this.sweepClearTimers.push(id)
-    }
-
-    this.sweepEndTimer = window.setTimeout(() => {
-      this.sweepEndTimer = null
-      this.finishToothbrushSweep()
-    }, sweepMs)
-  }
-
-  /** Large brush crosses the play board only (mouth-board clipped; HUD untouched). */
-  private playSweepBrush(): void {
-    const existing = this.mouthBoard.querySelector('.sweep-brush')
-    existing?.remove()
-    this.mouthBoard.querySelector('.sweep-trail')?.remove()
-
-    const brush = document.createElement('div')
-    brush.className = 'sweep-brush'
-    brush.setAttribute('aria-hidden', 'true')
-    brush.style.setProperty('--sweep-ms', `${GAME.toothbrushSweepMs}ms`)
-    brush.style.setProperty('--sweep-width', `${GAME.toothbrushSweepWidthPct}%`)
-    brush.innerHTML = `<img class="sweep-brush__art" src="${ASSETS.toothbrush}" alt="" draggable="false" />`
-    this.mouthBoard.appendChild(brush)
-
-    const trail = document.createElement('div')
-    trail.className = 'sweep-trail'
-    trail.setAttribute('aria-hidden', 'true')
-    this.mouthBoard.appendChild(trail)
-
-    // Restart CSS animation reliably.
-    void brush.offsetWidth
-    brush.classList.add('is-running')
-    this.startSweepTrail(brush, trail)
-
-    window.setTimeout(() => {
-      brush.remove()
-    }, GAME.toothbrushSweepMs + 40)
-  }
-
-  /** Soft glitter trail left behind the brush as it travels L→R (no text). */
-  private startSweepTrail(brush: HTMLElement, trail: HTMLElement): void {
-    this.stopSweepTrail()
-
-    const emit = (): void => {
-      if (!this.sweeping || !brush.isConnected || !trail.isConnected) return
-      const boardRect = this.mouthBoard.getBoundingClientRect()
-      if (boardRect.width <= 0) return
-      const brushRect = brush.getBoundingClientRect()
-      // Trailing edge of the brush (behind travel direction L→R).
-      const baseX = brushRect.left - boardRect.left + brushRect.width * 0.12
-      const baseY = brushRect.top - boardRect.top + brushRect.height * 0.48
-      const burst = Math.max(1, GAME.toothbrushSweepTrailBurst)
-      for (let i = 0; i < burst; i++) {
-        const s = document.createElement('span')
-        const kind = i % 3 === 0 ? 'star' : i % 3 === 1 ? 'dot' : 'cross'
-        s.className = `sweep-trail__s sweep-trail__s--${kind}`
-        const ox = (Math.random() - 0.55) * brushRect.width * 0.22
-        const oy = (Math.random() - 0.5) * brushRect.height * 0.55
-        s.style.left = `${baseX + ox}px`
-        s.style.top = `${baseY + oy}px`
-        s.style.setProperty('--life', `${GAME.toothbrushSweepTrailLifeMs}ms`)
-        s.style.setProperty('--drift-x', `${-8 - Math.random() * 22}px`)
-        s.style.setProperty('--drift-y', `${(Math.random() - 0.5) * 18}px`)
-        s.style.setProperty('--size', `${4 + Math.floor(Math.random() * 7)}px`)
-        s.style.setProperty('--delay', `${Math.floor(Math.random() * 30)}ms`)
-        trail.appendChild(s)
-        window.setTimeout(() => s.remove(), GAME.toothbrushSweepTrailLifeMs + 40)
-      }
-      this.sweepTrailTimer = window.setTimeout(emit, GAME.toothbrushSweepTrailEveryMs)
-    }
-
-    // First emit after brush is visibly on-screen.
-    this.sweepTrailTimer = window.setTimeout(emit, 70)
-    this.sweepTrailCleanup = window.setTimeout(() => {
-      this.sweepTrailCleanup = null
-      this.stopSweepTrail()
-      trail.remove()
-    }, GAME.toothbrushSweepMs + GAME.toothbrushSweepTrailLifeMs + 80)
-  }
-
-  private stopSweepTrail(): void {
-    if (this.sweepTrailTimer !== null) {
-      window.clearTimeout(this.sweepTrailTimer)
-      this.sweepTrailTimer = null
-    }
-    if (this.sweepTrailCleanup !== null) {
-      window.clearTimeout(this.sweepTrailCleanup)
-      this.sweepTrailCleanup = null
-    }
-  }
-
-  private finishToothbrushSweep(): void {
-    for (const id of this.sweepClearTimers) window.clearTimeout(id)
-    this.sweepClearTimers = []
-    // Stop emitting new trail sparks; leave fading ones (cleanup timer removes layer).
-    if (this.sweepTrailTimer !== null) {
-      window.clearTimeout(this.sweepTrailTimer)
-      this.sweepTrailTimer = null
-    }
-    this.mouthBoard.querySelector('.sweep-brush')?.remove()
-    this.mouthBoard.classList.remove('is-sweeping')
-    this.sweeping = false
-    this.endBrushEnsure(false)
-
-    if (this.screen !== 'playing') return
-    // Resume immediately — no modal / screen change.
-    if (document.hidden) {
-      this.backgroundPaused = true
-      this.lastTimerNow = null
-      return
-    }
-    this.startTimer()
-    this.startSpawner()
-  }
-
-  private clearSweepRuntime(): void {
-    for (const id of this.sweepClearTimers) window.clearTimeout(id)
-    this.sweepClearTimers = []
-    if (this.sweepEndTimer !== null) {
-      window.clearTimeout(this.sweepEndTimer)
-      this.sweepEndTimer = null
-    }
-    this.stopSweepTrail()
-    this.mouthBoard?.querySelector('.sweep-brush')?.remove()
-    this.mouthBoard?.querySelector('.sweep-trail')?.remove()
-    this.mouthBoard?.classList.remove('is-sweeping')
-    this.sweeping = false
-    this.endBrushEnsure()
-  }
-
-  /** Independent whack-a-mole spawn loop (not tied to catches). */
-  private startSpawner(): void {
-    this.stopSpawner()
-    // First germ appears quickly after start.
-    this.spawnTimer = window.setTimeout(() => this.runSpawnWave(), 180)
-  }
-
-  private stopSpawner(): void {
-    if (this.spawnTimer !== null) {
-      window.clearTimeout(this.spawnTimer)
-      this.spawnTimer = null
-    }
-    for (const id of this.burstTimers) window.clearTimeout(id)
-    this.burstTimers = []
-  }
-
-  private scheduleNextWave(): void {
-    if (this.screen !== 'playing') return
-    const delay = Math.round(
-      randBetween(GAME.spawnIntervalMinMs, GAME.spawnIntervalMaxMs),
-    )
-    this.spawnTimer = window.setTimeout(() => this.runSpawnWave(), delay)
-  }
-
-  private runSpawnWave(): void {
-    this.spawnTimer = null
-    if (this.screen !== 'playing' || this.sweeping) return
-
-    const freeSlots = this.countFreeGerms()
-    if (freeSlots <= 0) {
-      this.scheduleNextWave()
-      return
-    }
-
-    let count = 1
-    if (Math.random() < GAME.burstChance && freeSlots > 1) {
-      const extra = randInt(GAME.burstExtraMin, GAME.burstExtraMax)
-      count = Math.min(freeSlots, 1 + extra)
-    } else {
-      count = 1
-    }
-
-    for (let i = 0; i < count; i++) {
-      if (i === 0) {
-        this.spawnOneGerm()
-      } else {
-        const id = window.setTimeout(() => {
-          this.burstTimers = this.burstTimers.filter((t) => t !== id)
-          if (this.screen === 'playing') this.spawnOneGerm()
-        }, i * GAME.burstGapMs)
-        this.burstTimers.push(id)
-      }
-    }
-
-    this.scheduleNextWave()
-  }
-
-  private countFreeGerms(): number {
-    const freePool = this.germs.filter((g) => !g.isActive).length
-    const room = Math.max(0, this.effectiveConcurrentGerms() - this.countActiveGerms())
-    return Math.min(freePool, room)
-  }
-
-  private countActiveGerms(): number {
-    return this.germs.filter((g) => g.isActive).length
-  }
-
-  private spawnOneGerm(): void {
-    if (this.screen !== 'playing' || this.sweeping) return
-    if (this.countActiveGerms() >= this.effectiveConcurrentGerms()) return
-
-    const germ = this.germs.find((g) => !g.isActive)
-    if (!germ) return
-
-    const anchor = this.pickFreeAnchor()
-    if (!anchor) return
-
-    this.occupiedAnchors.add(anchor.id)
-    const mapped = mapImagePercentToBoard(this.mouthBoard, anchor.x, anchor.y)
-    // During toothbrush prepare / brush idle: no miss dwell so the board stays full.
-    germ.placeAt(
-      { ...anchor, x: mapped.x, y: mapped.y },
-      this.germMissFrozen ? false : undefined,
-    )
-  }
-
-  private handleCatch(): void {
-    if (this.screen !== 'playing') return
-    this.score += 1
-    this.hudScore.textContent = String(this.score)
-  }
-
-  /** Free slot after tap-pop or miss-retreat — do not auto-replace. */
-  private handleSlotFree(germ: GermController): void {
-    this.releaseAnchor(germ.anchorId)
-  }
-
-  /**
-   * Pick a free spawn anchor with fair arch coverage.
-   * Previous “farthest from occupied” bias starved the center tongue
-   * whenever any tooth was busy. Now: pick a random arch among those
-   * that still have free anchors, then a random free point in that arch.
-   */
-  private pickFreeAnchor(avoidId: string | null = null): SpawnAnchor | null {
-    const free = SPAWN_ANCHORS.filter((a) => !this.occupiedAnchors.has(a.id))
-    if (free.length === 0) return null
-    const preferred =
-      avoidId && free.length > 1 ? free.filter((a) => a.id !== avoidId) : free
-    const pool = preferred.length > 0 ? preferred : free
-
-    const arches = [...new Set(pool.map((a) => a.arch))]
-    const arch = arches[Math.floor(Math.random() * arches.length)]!
-    const inArch = pool.filter((a) => a.arch === arch)
-    return inArch[Math.floor(Math.random() * inArch.length)]!
-  }
-
-  private releaseAnchor(id: string | null): void {
-    if (id) this.occupiedAnchors.delete(id)
-  }
-
-  private hideAllGerms(): void {
-    this.clearBrushChanceNotice()
-    this.endBrushEnsure(false)
-    this.occupiedAnchors.clear()
-    for (const germ of this.germs) germ.hide()
-    this.toothbrush?.hide()
-    const floatLayer = this.root.querySelector('[data-float]')
-    if (floatLayer) floatLayer.replaceChildren()
-  }
-
-  private endRound(): void {
-    this.screen = 'result'
-    this.clearSweepRuntime()
-    this.clearBrushChanceNotice()
-    this.endBrushEnsure(false)
-    this.stopTimer()
-    this.stopSpawner()
-    this.hideAllGerms()
-    this.clearEndCountdown()
-
-    // Same-frame optimistic TOP3: numbers in the first result HTML paint.
-    // Never await Sheets / complete — network starts in parallel after paint setup.
-    // Do NOT persist optimistic to cache — only successful server top3 updates
-    // cache (submit failure must not poison the next round's baseline).
-    const score = this.score
-    const syncGen = ++this.resultSyncGen
-    // Invalidate in-flight start/round prefetches; result sync owns cache now.
-    this.top3PrefetchGen++
-    // Baseline from warm snapshot (countdown/start prefetch) — not a network wait.
-    const baseline = this.warmTop3 ?? getCachedTop3()
-    bumpTop3CacheSeq()
-    const optimistic = mergeOptimisticTop3(score, baseline)
-    const showTop3 = this.top3HasScores(optimistic)
-
-    // Score POST first (authoritative top3 in JSON). Must beat complete to the
-    // shared Apps Script LockService — complete is deferred below.
-    const scorePromise = submitSheetsScore(score)
-
-    this.overlay.hidden = false
-    this.overlay.innerHTML = `
-      <div class="panel panel--result">
-        <h2 class="panel__title">🎉 30초 미션 완료!</h2>
-        <p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>
-        <div class="panel__top3" data-top3${showTop3 ? '' : ' hidden'}>
-          <p class="panel__top3-title">👑 도전! 기록 TOP 3</p>
-          <p class="panel__top3-line" data-top3-rank="1">1위: ${optimistic[0]}마리</p>
-          <p class="panel__top3-line" data-top3-rank="2">2위: ${optimistic[1]}마리</p>
-          <p class="panel__top3-line" data-top3-rank="3">3위: ${optimistic[2]}마리</p>
-        </div>
-        <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
-        <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
-      </div>
-    `
-    const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
-    const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
-    retry.addEventListener('click', () => {
-      retry.classList.remove('btn--pulse')
-      logSheetsEvent('retry')
-      this.startRound()
-    })
-
-    // Tip expands into the retry slot for 5s — pulse + black↔red text, no button yet.
-    this.clearRetryRevealTimer()
-    this.retryRevealTimer = window.setTimeout(() => {
-      this.retryRevealTimer = null
-      if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
-      tip.classList.remove('panel__tip--holding')
-      retry.hidden = false
-      retry.classList.add('btn--pulse')
-    }, 5000)
-
-    // Yield so the score CORS POST is on the wire before complete contends
-    // for LockService. Keepalive/beacon still runs if the tab closes soon after.
-    window.setTimeout(() => {
-      if (syncGen !== this.resultSyncGen) return
-      logSheetsEvent('complete')
-    }, 0)
-
-    // Background only — already-started promise; never blocks UI/retry.
-    void this.syncResultTop3(score, syncGen, scorePromise)
-  }
-
-  private top3HasScores(top3: Top3Scores): boolean {
-    return top3[0] > 0 || top3[1] > 0 || top3[2] > 0
-  }
-
-  private renderTop3Lines(block: HTMLElement, top3: Top3Scores): void {
-    const labels = ['1위', '2위', '3위'] as const
-    for (let i = 0; i < 3; i++) {
-      const line = block.querySelector(`[data-top3-rank="${i + 1}"]`)
-      if (!line) continue
-      line.textContent = `${labels[i]}: ${top3[i]!}마리`
-    }
-  }
-
-  /**
-   * Background Sheets sync only. Optimistic TOP3 is already in the result HTML
-   * (not written to cache until server success).
-   *
-   * - Score POST `trustServer`: paint response top3 as-is (strictly greater
-   *   insert on server — equals do not add a slot). No extra GET.
-   * - Beacon/stale GET: ensureScoreInTop3 once (dedupe + no equal insert).
-   * - Submit failure: keep optimistic on screen; leave cache at pre-round board.
-   * - Late prior-round sync ignored via resultSyncGen.
-   * - `started` is the promise kicked off in endRound (score-before-complete).
-   */
-  private async syncResultTop3(
-    score: number,
-    syncGen: number,
-    started?: Promise<Awaited<ReturnType<typeof submitSheetsScore>>>,
-  ): Promise<void> {
-    let result: Awaited<ReturnType<typeof submitSheetsScore>> = null
-    try {
-      result = await (started ?? submitSheetsScore(score))
-    } catch {
-      result = null
-    }
-
-    // Drop late sync from a previous result (fast retry) — do not overwrite UI/cache.
-    if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
-    const live = this.overlay.querySelector<HTMLElement>('[data-top3]')
-    if (!live) return
-
-    if (!result) return // keep optimistic paint; cache untouched (no poison)
-
-    const server = result.top3
-    // Authoritative POST board: trust as-is (server already strictly-greater + dedupe).
-    // Beacon path: ensure once for stale GET coalesce / local dedupe.
-    const display =
-      result.trustServer || score <= 0
-        ? server
-        : ensureScoreInTop3(score, server)
-    this.top3PrefetchGen++
-    setCachedTop3(display, { authoritative: result.trustServer })
-    // Next round's instant paint uses this warm board (server truth, not optimistic).
-    this.warmTop3 = display
-    if (this.top3HasScores(display)) {
-      this.renderTop3Lines(live, display)
-      live.hidden = false
-    } else {
-      live.hidden = true
-    }
+  .panel--result .btn {
+    min-height: 52px;
+    font-size: 1.15rem;
   }
 }
