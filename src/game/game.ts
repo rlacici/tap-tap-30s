@@ -85,6 +85,13 @@ export class CavityTapGame {
   private resultSyncGen = 0
   /** Bumps on prefetch / result so late TOP3 GETs cannot clobber fresher cache. */
   private top3PrefetchGen = 0
+  /**
+   * Warm pre-play TOP3 for instant result first paint (memory snapshot).
+   * Updated by prefetch / successful sync — never holds optimistic merges.
+   */
+  private warmTop3: Top3Scores | null = null
+  /** True after we prefetch once during the final 5s countdown this round. */
+  private endCountdownPrefetched = false
   private onResize = (): void => {
     layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
     this.fitHudBrand()
@@ -374,11 +381,15 @@ export class CavityTapGame {
   }
 
   /**
-   * Refresh TOP3 cache from server (start panel + each round start).
+   * Refresh TOP3 cache from server (start panel + each round start + final 5s).
    * Never paints UI — only warms sessionStorage/memory for optimistic merge.
    * Late responses are dropped if a newer prefetch/result already advanced gen.
    */
   private prefetchTop3Cache(): void {
+    // Seed warm snapshot from whatever cache we already have (session/memory).
+    const seeded = getCachedTop3()
+    if (seeded) this.warmTop3 = seeded
+
     const gen = ++this.top3PrefetchGen
     const expectSeq = currentTop3CacheSeq()
     void fetchSheetsTop3({ expectSeq })
@@ -387,6 +398,7 @@ export class CavityTapGame {
         if (gen !== this.top3PrefetchGen) return
         // Result sync owns cache during the result screen.
         if (this.screen === 'result') return
+        this.warmTop3 = top3
       })
       .catch(() => {
         // Prefetch is best-effort — game must not depend on Sheets.
@@ -395,6 +407,7 @@ export class CavityTapGame {
 
   private startRound(): void {
     this.screen = 'playing'
+    this.endCountdownPrefetched = false
     // Retry skips the start panel — refresh cache before this round's optimistic.
     this.prefetchTop3Cache()
     this.score = 0
@@ -489,6 +502,12 @@ export class CavityTapGame {
       // Final 5s: flash 5→1 only (no 0 / 끝!). Taps still hit germs.
       if (timeLeft >= 1 && timeLeft <= 5) {
         this.flashEndCountdown(timeLeft)
+        // Warm TOP3 once during countdown so result first paint has numbers
+        // without waiting on a network round-trip at endRound.
+        if (timeLeft === 5 && !this.endCountdownPrefetched) {
+          this.endCountdownPrefetched = true
+          this.prefetchTop3Cache()
+        }
       }
     }
     if (elapsedSec > this.elapsedSec) {
@@ -1044,18 +1063,24 @@ export class CavityTapGame {
     this.stopSpawner()
     this.hideAllGerms()
     this.clearEndCountdown()
-    logSheetsEvent('complete')
 
     // Same-frame optimistic TOP3: numbers in the first result HTML paint.
-    // Do not await Sheets — background sync updates later (server may flash).
+    // Never await Sheets / complete — network starts in parallel after paint setup.
     // Do NOT persist optimistic to cache — only successful server top3 updates
     // cache (submit failure must not poison the next round's baseline).
     const score = this.score
+    const syncGen = ++this.resultSyncGen
     // Invalidate in-flight start/round prefetches; result sync owns cache now.
     this.top3PrefetchGen++
+    // Baseline from warm snapshot (countdown/start prefetch) — not a network wait.
+    const baseline = this.warmTop3 ?? getCachedTop3()
     bumpTop3CacheSeq()
-    const optimistic = mergeOptimisticTop3(score, getCachedTop3())
+    const optimistic = mergeOptimisticTop3(score, baseline)
     const showTop3 = this.top3HasScores(optimistic)
+
+    // Score POST first (authoritative top3 in JSON). Must beat complete to the
+    // shared Apps Script LockService — complete is deferred below.
+    const scorePromise = submitSheetsScore(score)
 
     this.overlay.hidden = false
     this.overlay.innerHTML = `
@@ -1078,9 +1103,16 @@ export class CavityTapGame {
       logSheetsEvent('retry')
       this.startRound()
     })
-    // Fire-and-forget: never blocks result paint or retry.
-    const syncGen = ++this.resultSyncGen
-    void this.syncResultTop3(score, syncGen)
+
+    // Yield so the score CORS POST is on the wire before complete contends
+    // for LockService. Keepalive/beacon still runs if the tab closes soon after.
+    window.setTimeout(() => {
+      if (syncGen !== this.resultSyncGen) return
+      logSheetsEvent('complete')
+    }, 0)
+
+    // Background only — already-started promise; never blocks UI/retry.
+    void this.syncResultTop3(score, syncGen, scorePromise)
   }
 
   private top3HasScores(top3: Top3Scores): boolean {
@@ -1101,14 +1133,20 @@ export class CavityTapGame {
    * (not written to cache until server success).
    *
    * - Score POST `trustServer`: paint response top3 as-is (ties + no double insert).
+   *   No extra GET on this path — sheet-correct numbers arrive with the POST JSON.
    * - Beacon/stale GET: ensureScoreInTop3 once (21-duplicate guard).
    * - Submit failure: keep optimistic on screen; leave cache at pre-round board.
    * - Late prior-round sync ignored via resultSyncGen.
+   * - `started` is the promise kicked off in endRound (score-before-complete).
    */
-  private async syncResultTop3(score: number, syncGen: number): Promise<void> {
+  private async syncResultTop3(
+    score: number,
+    syncGen: number,
+    started?: Promise<Awaited<ReturnType<typeof submitSheetsScore>>>,
+  ): Promise<void> {
     let result: Awaited<ReturnType<typeof submitSheetsScore>> = null
     try {
-      result = await submitSheetsScore(score)
+      result = await (started ?? submitSheetsScore(score))
     } catch {
       result = null
     }
@@ -1129,6 +1167,8 @@ export class CavityTapGame {
         : ensureScoreInTop3(score, server)
     this.top3PrefetchGen++
     setCachedTop3(display, { authoritative: result.trustServer })
+    // Next round's instant paint uses this warm board (server truth, not optimistic).
+    this.warmTop3 = display
     if (this.top3HasScores(display)) {
       this.renderTop3Lines(live, display)
       live.hidden = false
