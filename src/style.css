@@ -708,7 +708,7 @@ button {
 }
 
 .brush-chance-flash.is-flash {
-  animation: brush-chance-flash 280ms ease-out forwards;
+  animation: brush-chance-flash 1000ms ease-out forwards;
   will-change: opacity;
 }
 
@@ -752,7 +752,7 @@ button {
 }
 
 .brush-chance-banner.is-show {
-  animation: brush-chance-banner 1250ms ease-out forwards;
+  animation: brush-chance-banner 1450ms ease-out forwards;
   will-change: opacity, transform;
 }
 
