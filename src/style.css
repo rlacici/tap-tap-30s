@@ -708,7 +708,7 @@ button {
 }
 
 .brush-chance-flash.is-flash {
-  animation: brush-chance-flash 1000ms ease-out forwards;
+  animation: brush-chance-flash 2000ms ease-out forwards;
   will-change: opacity;
 }
 
