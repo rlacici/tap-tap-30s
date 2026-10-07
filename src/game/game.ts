@@ -813,24 +813,24 @@ export class CavityTapGame {
     flash.classList.remove('is-flash')
     void flash.offsetWidth
     flash.classList.add('is-flash')
-    // Match CSS flash duration (~0.28s) then hide so [hidden] wins next spawn.
+    // Match CSS flash duration (~1.0s) then hide so [hidden] wins next spawn.
     this.brushChanceFlashTimer = window.setTimeout(() => {
       this.brushChanceFlashTimer = null
       flash.classList.remove('is-flash')
       flash.hidden = true
-    }, 300)
+    }, 1000)
 
     const banner = this.brushChanceBanner
     banner.hidden = false
     banner.classList.remove('is-show')
     void banner.offsetWidth
     banner.classList.add('is-show')
-    // ~1.25s hold, or until brush tapped / miss / round teardown.
+    // ~1.45s hold (slightly past flash), or until brush tapped / miss / round teardown.
     this.brushChanceBannerTimer = window.setTimeout(() => {
       this.brushChanceBannerTimer = null
       banner.classList.remove('is-show')
       banner.hidden = true
-    }, 1250)
+    }, 1450)
   }
 
   private clearBrushChanceNotice(): void {
