@@ -859,6 +859,30 @@ button {
   box-shadow: none;
   pointer-events: none;
   user-select: none;
+  box-sizing: border-box;
+  transition:
+    min-height 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    margin 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    padding 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/*
+ * Result tip holds the retry-button slot for 4s (JS: panel__tip--holding).
+ * Band expands to tip + gap + btn height so layout doesn't jump when retry appears.
+ */
+.panel__tip--holding {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* ~2-line tip + pad + usual tip→btn gap(16) + retry min-height(58) */
+  min-height: calc(2.8em + 20px + 16px + 58px);
+  margin-bottom: 0;
+  padding-top: 14px;
+  padding-bottom: 14px;
+}
+
+.panel--result .btn[data-action='retry'][hidden] {
+  display: none !important;
 }
 
 /* Anonymous TOP3 — occupies former tip slot above the educational tip. */
@@ -1231,6 +1255,13 @@ button {
     margin: 8px 0 12px;
     padding: 8px 10px;
     font-size: clamp(0.92rem, 3.5vw, 1.02rem);
+  }
+
+  .panel__tip--holding {
+    /* gap 12 + btn 52 on narrow result padding */
+    min-height: calc(2.8em + 16px + 12px + 52px);
+    padding-top: 12px;
+    padding-bottom: 12px;
   }
 
   .panel--result .btn {
