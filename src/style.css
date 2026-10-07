@@ -867,8 +867,10 @@ button {
 }
 
 /*
- * Result tip holds the retry-button slot for 4s (JS: panel__tip--holding).
+ * Result tip holds the retry-button slot for 5s (JS: panel__tip--holding).
  * Band expands to tip + gap + btn height so layout doesn't jump when retry appears.
+ * While holding: pulse + text color black ↔ red (style A band bg stays).
+ * Removing --holding stops the animation (retry button then appears).
  */
 .panel__tip--holding {
   display: flex;
@@ -879,6 +881,20 @@ button {
   margin-bottom: 0;
   padding-top: 14px;
   padding-bottom: 14px;
+  animation: tip-hold-attention 0.85s ease-in-out infinite;
+  will-change: transform, color;
+}
+
+@keyframes tip-hold-attention {
+  0%,
+  100% {
+    color: #000000;
+    transform: scale(1);
+  }
+  50% {
+    color: #e01020;
+    transform: scale(1.035);
+  }
 }
 
 .panel--result .btn[data-action='retry'][hidden] {
