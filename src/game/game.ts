@@ -38,10 +38,16 @@ export class CavityTapGame {
   private hudTime!: HTMLElement
   private hudScore!: HTMLElement
   private endCountdown!: HTMLElement
+  private brushChanceFlash!: HTMLElement
+  private brushChanceBanner!: HTMLElement
   private overlay!: HTMLElement
   private stage!: HTMLElement
   /** Last 5…1 digit already flashed (avoid repeat ticks). */
   private lastEndCountdownDigit: number | null = null
+  /** Soft white flash hide timer (brush chance notice). */
+  private brushChanceFlashTimer: number | null = null
+  /** Banner auto-hide timer — cleared early on brush tap / miss / round end. */
+  private brushChanceBannerTimer: number | null = null
   private mouthScene!: HTMLElement
   private mouthBoard!: HTMLElement
   private germs: GermController[] = []
@@ -232,6 +238,19 @@ export class CavityTapGame {
           aria-hidden="true"
         ></div>
 
+        <div
+          class="brush-chance-flash"
+          data-brush-flash
+          hidden
+          aria-hidden="true"
+        ></div>
+        <p
+          class="brush-chance-banner"
+          data-brush-banner
+          hidden
+          aria-hidden="true"
+        >칫솔 찬스!</p>
+
         <div class="overlay" data-overlay></div>
       </div>
     `
@@ -240,6 +259,8 @@ export class CavityTapGame {
     this.hudTime = this.root.querySelector('[data-hud="time"]')!
     this.hudScore = this.root.querySelector('[data-hud="score"]')!
     this.endCountdown = this.root.querySelector('[data-end-countdown]')!
+    this.brushChanceFlash = this.root.querySelector('[data-brush-flash]')!
+    this.brushChanceBanner = this.root.querySelector('[data-brush-banner]')!
     this.overlay = this.root.querySelector('[data-overlay]')!
     this.stage = this.root.querySelector('[data-stage]')!
 
@@ -271,6 +292,7 @@ export class CavityTapGame {
     this.toothbrush = new ToothbrushController(this.mouthBoard, {
       onActivated: () => this.beginToothbrushSweep(),
       onMissComplete: (item) => {
+        this.clearBrushChanceNotice()
         this.releaseAnchor(item.anchorId)
         this.endBrushEnsure()
       },
@@ -421,6 +443,7 @@ export class CavityTapGame {
     this.screen = 'playing'
     this.endCountdownPrefetched = false
     this.clearRetryRevealTimer()
+    this.clearBrushChanceNotice()
     // Retry skips the start panel — refresh cache before this round's optimistic.
     this.prefetchTop3Cache()
     this.score = 0
@@ -773,10 +796,65 @@ export class CavityTapGame {
     this.occupiedAnchors.add(anchor.id)
     const mapped = mapImagePercentToBoard(this.mouthBoard, anchor.x, anchor.y)
     this.toothbrush.placeAt({ ...anchor, x: mapped.x, y: mapped.y })
+    // Soft flash +「칫솔 찬스!」— brush size unchanged; taps pass through notice.
+    if (this.toothbrush.isActive) this.showBrushChanceNotice()
+  }
+
+  /**
+   * Soft translucent white flash + upper-center「칫솔 찬스!」when the bonus brush appears.
+   * pointer-events: none (CSS) so germ tapping continues. Dismiss banner early on
+   * brush tap / miss / round end — do not scale the toothbrush itself.
+   */
+  private showBrushChanceNotice(): void {
+    this.clearBrushChanceNotice()
+
+    const flash = this.brushChanceFlash
+    flash.hidden = false
+    flash.classList.remove('is-flash')
+    void flash.offsetWidth
+    flash.classList.add('is-flash')
+    // Match CSS flash duration (~0.28s) then hide so [hidden] wins next spawn.
+    this.brushChanceFlashTimer = window.setTimeout(() => {
+      this.brushChanceFlashTimer = null
+      flash.classList.remove('is-flash')
+      flash.hidden = true
+    }, 300)
+
+    const banner = this.brushChanceBanner
+    banner.hidden = false
+    banner.classList.remove('is-show')
+    void banner.offsetWidth
+    banner.classList.add('is-show')
+    // ~1.25s hold, or until brush tapped / miss / round teardown.
+    this.brushChanceBannerTimer = window.setTimeout(() => {
+      this.brushChanceBannerTimer = null
+      banner.classList.remove('is-show')
+      banner.hidden = true
+    }, 1250)
+  }
+
+  private clearBrushChanceNotice(): void {
+    if (this.brushChanceFlashTimer !== null) {
+      window.clearTimeout(this.brushChanceFlashTimer)
+      this.brushChanceFlashTimer = null
+    }
+    if (this.brushChanceBannerTimer !== null) {
+      window.clearTimeout(this.brushChanceBannerTimer)
+      this.brushChanceBannerTimer = null
+    }
+    if (this.brushChanceFlash) {
+      this.brushChanceFlash.classList.remove('is-flash')
+      this.brushChanceFlash.hidden = true
+    }
+    if (this.brushChanceBanner) {
+      this.brushChanceBanner.classList.remove('is-show')
+      this.brushChanceBanner.hidden = true
+    }
   }
 
   private beginToothbrushSweep(): void {
     if (this.screen !== 'playing' || this.sweeping) return
+    this.clearBrushChanceNotice()
     this.sweeping = true
     this.mouthBoard.classList.add('is-sweeping')
     this.clearBrushEnsureTimersOnly()
@@ -1060,6 +1138,7 @@ export class CavityTapGame {
   }
 
   private hideAllGerms(): void {
+    this.clearBrushChanceNotice()
     this.endBrushEnsure(false)
     this.occupiedAnchors.clear()
     for (const germ of this.germs) germ.hide()
@@ -1071,6 +1150,7 @@ export class CavityTapGame {
   private endRound(): void {
     this.screen = 'result'
     this.clearSweepRuntime()
+    this.clearBrushChanceNotice()
     this.endBrushEnsure(false)
     this.stopTimer()
     this.stopSpawner()
