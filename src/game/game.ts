@@ -1186,7 +1186,7 @@ export class CavityTapGame {
           <p class="panel__top3-line" data-top3-rank="2">2위: ${optimistic[1]}마리</p>
           <p class="panel__top3-line" data-top3-rank="3">3위: ${optimistic[2]}마리</p>
         </div>
-        <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로 제거해요!</p>
+        <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로<br />제거해요!</p>
         <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
       </div>
     `
