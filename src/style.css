@@ -551,19 +551,20 @@ button {
   overflow: visible;
 }
 
-/* Successful-catch only (spawned from catchFx). Thin mint/cream ring. */
+/* Successful-catch only (spawned from catchFx). Thin mint/cream ring.
+   Base = germ size; end scale ~1.4 → ring finishes clearly past germ (not screen-wide). */
 .catch-fx__ripple {
   position: absolute;
   left: 0;
   top: 0;
-  width: 36px;
-  height: 36px;
+  width: var(--germ-size, 18cqw);
+  height: var(--germ-size, 18cqw);
   margin: 0;
   border-radius: 50%;
   border: 2px solid color-mix(in srgb, #9eecc4 72%, #fff6e8);
   box-sizing: border-box;
   pointer-events: none;
-  transform: translate(-50%, -50%) scale(0.42);
+  transform: translate(-50%, -50%) scale(0.55);
   opacity: 0.88;
   animation: catch-ripple var(--catch-ripple-ms, 300ms) ease-out forwards;
   z-index: 1;
@@ -1264,14 +1265,14 @@ button {
 
 @keyframes catch-ripple {
   0% {
-    transform: translate(-50%, -50%) scale(0.42);
+    transform: translate(-50%, -50%) scale(0.55);
     opacity: 0.9;
   }
   70% {
     opacity: 0.45;
   }
   100% {
-    transform: translate(-50%, -50%) scale(1.55);
+    transform: translate(-50%, -50%) scale(1.4);
     opacity: 0;
   }
 }
