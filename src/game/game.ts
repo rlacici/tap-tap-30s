@@ -99,8 +99,8 @@ export class CavityTapGame {
   /** True after we prefetch once during the final 5s countdown this round. */
   private endCountdownPrefetched = false
   /**
-   * Result tip holds the retry-button slot for 5s so frantic taps don't skip the tip.
-   * During hold: pulse + black↔red text (CSS). Cleared on startRound / next endRound.
+   * Result tip holds the retry-button slot for 7s so frantic taps don't skip the tip.
+   * During hold: larger tip type + pulse + black↔red text (CSS). Cleared on startRound / next endRound.
    */
   private retryRevealTimer: number | null = null
   private onResize = (): void => {
@@ -1198,7 +1198,7 @@ export class CavityTapGame {
       this.startRound()
     })
 
-    // Tip expands into the retry slot for 5s — pulse + black↔red text, no button yet.
+    // Tip expands into the retry slot for 7s — large type + pulse + black↔red, no button yet.
     this.clearRetryRevealTimer()
     this.retryRevealTimer = window.setTimeout(() => {
       this.retryRevealTimer = null
@@ -1206,7 +1206,7 @@ export class CavityTapGame {
       tip.classList.remove('panel__tip--holding')
       retry.hidden = false
       retry.classList.add('btn--pulse')
-    }, 5000)
+    }, 7000)
 
     // Yield so the score CORS POST is on the wire before complete contends
     // for LockService. Keepalive/beacon still runs if the tab closes soon after.
