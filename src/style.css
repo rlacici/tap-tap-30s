@@ -541,7 +541,7 @@ button {
 }
 
 /* Tap-catch firework burst — pointer-events none, self-removes in JS.
-   No onomatopoeia text — particles + colored +1 only. */
+   Particles + colored +1 + soft mint ripple ring (no onomatopoeia). */
 .catch-fx {
   position: absolute;
   z-index: 6;
@@ -549,6 +549,26 @@ button {
   height: 0;
   pointer-events: none;
   overflow: visible;
+}
+
+/* Successful-catch only (spawned from catchFx). Thin mint/cream ring. */
+.catch-fx__ripple {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, #9eecc4 72%, #fff6e8);
+  box-sizing: border-box;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.42);
+  opacity: 0.88;
+  animation: catch-ripple var(--catch-ripple-ms, 300ms) ease-out forwards;
+  z-index: 1;
+  will-change: transform, opacity;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #fff6e8 55%, transparent);
 }
 
 .catch-fx__p {
@@ -1239,6 +1259,20 @@ button {
   to {
     opacity: 0;
     transform: scaleX(0.15);
+  }
+}
+
+@keyframes catch-ripple {
+  0% {
+    transform: translate(-50%, -50%) scale(0.42);
+    opacity: 0.9;
+  }
+  70% {
+    opacity: 0.45;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1.55);
+    opacity: 0;
   }
 }
 
