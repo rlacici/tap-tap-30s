@@ -16,9 +16,10 @@ export type CatchFxStyle = 'tap' | 'sweep'
 
 /**
  * Kid-friendly catch burst at (x, y) in float-layer coords.
- * Particles + floating +1 only — never onomatopoeia text.
+ * Particles + floating +1 + soft mint ripple ring — never onomatopoeia text.
  * Pointer-events none; self-removes. Score is NOT touched here.
  * `sweep` uses stronger toothbrushSweepCatch* tunables; `tap` keeps normal catch*.
+ * Ripple is the same for tap and sweep (only fires on successful catch).
  */
 export function spawnCatchFx(
   layer: HTMLElement,
@@ -51,6 +52,11 @@ export function spawnCatchFx(
   root.style.setProperty('--catch-plus-ms', `${plusMs}ms`)
   root.style.setProperty('--catch-plus-rise', `${plusRise}px`)
   root.style.setProperty('--catch-plus-scale', String(plusScale))
+
+  // Soft mint/cream ripple — expands + fades; does not block taps.
+  const ripple = document.createElement('span')
+  ripple.className = 'catch-fx__ripple'
+  root.appendChild(ripple)
 
   const count = Math.max(1, Math.min(56, particleCount))
   const wobble = (Math.random() - 0.5) * 0.35
