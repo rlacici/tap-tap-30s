@@ -1271,24 +1271,32 @@ export class CavityTapGame {
       <div class="panel panel--result">
         <p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>
         <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로<br />제거해요!</p>
-        <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
+        <div class="panel__actions" data-actions hidden>
+          <button type="button" class="btn" data-action="retry">다시 도전하기</button>
+          <button type="button" class="btn btn--end" data-action="end">끝내기</button>
+        </div>
         <p class="panel__remain" data-remain hidden>도전가능한 횟수: ${remain}회</p>
       </div>
     `
       const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
+      const actions = this.overlay.querySelector<HTMLElement>('[data-actions]')!
       const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
+      const endBtn = this.overlay.querySelector<HTMLButtonElement>('[data-action="end"]')!
       const remainEl = this.overlay.querySelector<HTMLElement>('[data-remain]')!
       retry.addEventListener('click', () => {
         retry.classList.remove('btn--pulse')
         logSheetsEvent('retry')
         this.startRound()
       })
+      endBtn.addEventListener('click', () => {
+        window.location.href = keyringReturnUrl()
+      })
       this.clearRetryRevealTimer()
       this.retryRevealTimer = window.setTimeout(() => {
         this.retryRevealTimer = null
         if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
         tip.classList.remove('panel__tip--holding')
-        retry.hidden = false
+        actions.hidden = false
         remainEl.hidden = false
         retry.classList.add('btn--pulse')
       }, 5000)

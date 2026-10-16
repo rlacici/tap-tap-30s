@@ -1014,6 +1014,26 @@ button {
   display: none !important;
 }
 
+.panel__actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.panel__actions[hidden] {
+  display: none !important;
+}
+
+.panel__actions .btn {
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
+  padding-left: 6px;
+  padding-right: 6px;
+  font-size: 0.92rem;
+}
+
 .panel__remain {
   margin: 10px 0 0;
   font-size: 0.92rem;
