@@ -415,6 +415,7 @@ export class CavityTapGame {
       startBtn.classList.remove('btn--gated')
       startBtn.dataset.action = 'start'
       startBtn.textContent = fromKeyring ? '🎮 게임 시작하기' : '시작하기'
+      if (fromKeyring) startBtn.classList.add('btn--pulse')
     }
 
     const showLoadFailure = (): void => {
@@ -427,6 +428,7 @@ export class CavityTapGame {
       startBtn.classList.remove('btn--gated')
       startBtn.dataset.action = 'retry-assets'
       startBtn.textContent = '다시 불러오기'
+      startBtn.classList.remove('btn--pulse')
     }
 
     const showLoading = (): void => {
@@ -439,6 +441,7 @@ export class CavityTapGame {
       startBtn.classList.add('btn--gated')
       startBtn.dataset.action = 'start'
       startBtn.textContent = '불러오는 중…'
+      startBtn.classList.remove('btn--pulse')
     }
 
     startBtn.addEventListener('click', () => {
@@ -449,6 +452,7 @@ export class CavityTapGame {
         return
       }
       if (!assetsReady) return
+      startBtn.classList.remove('btn--pulse')
       this.startRound()
     })
 
