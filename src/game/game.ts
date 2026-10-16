@@ -43,18 +43,23 @@ function bumpKeyringPlays(): number {
 }
 
 function keyringReturnUrl(): string {
+  let href = 'https://rlacici.github.io/health-challenge-2026/'
   const raw = new URLSearchParams(window.location.search).get('return')
   if (raw) {
     try {
       const url = new URL(raw, window.location.href)
       if (url.protocol === 'https:' || url.protocol === 'http:') {
-        return url.href
+        let path = url.pathname.replace(/complete-preview\.html$/i, '')
+        if (!path.endsWith('/')) {
+          path = path.replace(/[^/]*$/, '')
+        }
+        href = url.origin + path
       }
     } catch {
       /* ignore bad return */
     }
   }
-  return 'https://rlacici.github.io/health-challenge-2026/'
+  return href + (href.indexOf('?') >= 0 ? '&' : '?') + 'tag=' + Date.now()
 }
 
 function randInt(min: number, max: number): number {
