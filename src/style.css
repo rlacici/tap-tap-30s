@@ -654,7 +654,8 @@ button {
   inset: 0;
   z-index: 8;
   display: grid;
-  place-items: center;
+  place-items: safe center;
+  overflow: auto;
   padding: 24px;
   background:
     radial-gradient(80% 55% at 50% 35%, rgba(61, 255, 176, 0.12), transparent 60%),
@@ -875,7 +876,11 @@ button {
 }
 
 .panel--result .panel__score {
-  margin: 8px 0 10px;
+  margin: 0 0 10px;
+}
+
+.panel--result .panel__copy {
+  margin: 8px 0;
 }
 
 .panel__load-status {

@@ -42,6 +42,19 @@ function bumpKeyringPlays(): number {
   return next
 }
 
+const KEYRING_LAST_SCORE_KEY = 'tap-tap-keyring-last-score'
+
+function setKeyringLastScore(score: number): void {
+  sessionStorage.setItem(KEYRING_LAST_SCORE_KEY, String(score))
+}
+
+function getKeyringLastScore(): number | null {
+  const raw = sessionStorage.getItem(KEYRING_LAST_SCORE_KEY)
+  if (raw === null) return null
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : null
+}
+
 function keyringReturnUrl(): string {
   let href = 'https://rlacici.github.io/health-challenge-2026/'
   const raw = new URLSearchParams(window.location.search).get('return')
@@ -1224,13 +1237,11 @@ export class CavityTapGame {
   private showKeyringDone(score?: number): void {
     this.screen = 'result'
     this.overlay.hidden = false
-    const scoreLine =
-      typeof score === 'number'
-        ? `<p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>`
-        : ''
+    const shown = typeof score === 'number' ? score : getKeyringLastScore() ?? this.score
+    setKeyringLastScore(shown)
     this.overlay.innerHTML = `
       <div class="panel panel--result">
-        ${scoreLine}
+        <p class="panel__score">충치균 <span>${shown}</span>마리 잡기 성공!</p>
         <h2 class="panel__title">보너스 게임 3번 모두 완료! 🎉</h2>
         <p class="panel__copy">게임은 여기까지!</p>
         <p class="panel__copy">키링을 다시 태그하면<br />또 다른 랜덤 한마디가<br />기다리고 있어요!</p>
