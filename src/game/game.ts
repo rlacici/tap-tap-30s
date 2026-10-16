@@ -364,7 +364,7 @@ export class CavityTapGame {
           fetchpriority="high"
         />
         <p class="panel__eyebrow">미추홀구보건소와 함께하는</p>
-        <h1 class="panel__title">🎁 깜짝 보너스 게임!</h1>
+        <h1 class="panel__title">🎁 깜짝 보너스<br />게임!</h1>
         <p class="panel__copy">30초 동안 충치균을 얼마나 잡을 수<br />있을까요?</p>
         <p class="panel__hint" aria-label="힌트">
           <span class="panel__hint-label">💡 힌트!</span>

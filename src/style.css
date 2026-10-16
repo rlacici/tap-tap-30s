@@ -892,6 +892,10 @@ button {
   display: none;
 }
 
+.panel--start .panel__title {
+  line-height: 1.18;
+}
+
 .panel--start .panel__copy {
   margin-bottom: 8px;
 }
