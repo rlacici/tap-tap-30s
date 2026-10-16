@@ -24,8 +24,37 @@ import { ToothbrushController } from './toothbrush'
 
 type Screen = 'start' | 'playing' | 'result'
 
+const KEYRING_MAX_PLAYS = 3
+const KEYRING_PLAYS_KEY = 'tap-tap-keyring-plays'
+
 function isFromKeyring(): boolean {
   return new URLSearchParams(window.location.search).get('from') === 'keyring'
+}
+
+function getKeyringPlays(): number {
+  const n = Number(sessionStorage.getItem(KEYRING_PLAYS_KEY) || '0')
+  return Number.isFinite(n) ? Math.max(0, n) : 0
+}
+
+function bumpKeyringPlays(): number {
+  const next = Math.min(KEYRING_MAX_PLAYS, getKeyringPlays() + 1)
+  sessionStorage.setItem(KEYRING_PLAYS_KEY, String(next))
+  return next
+}
+
+function keyringReturnUrl(): string {
+  const raw = new URLSearchParams(window.location.search).get('return')
+  if (raw) {
+    try {
+      const url = new URL(raw, window.location.href)
+      if (url.protocol === 'https:' || url.protocol === 'http:') {
+        return url.href
+      }
+    } catch {
+      /* ignore bad return */
+    }
+  }
+  return 'https://rlacici.github.io/health-challenge-2026/'
 }
 
 function randInt(min: number, max: number): number {
@@ -311,6 +340,10 @@ export class CavityTapGame {
     this.stopSpawner()
     this.hideAllGerms()
     this.overlay.hidden = false
+    if (isFromKeyring() && getKeyringPlays() >= KEYRING_MAX_PLAYS) {
+      this.showKeyringDone()
+      return
+    }
     const fromKeyring = isFromKeyring()
     this.overlay.innerHTML = fromKeyring
       ? `
@@ -471,6 +504,7 @@ export class CavityTapGame {
   }
 
   private startRound(): void {
+    if (isFromKeyring()) bumpKeyringPlays()
     this.screen = 'playing'
     this.endCountdownPrefetched = false
     this.clearRetryRevealTimer()
@@ -1178,6 +1212,23 @@ export class CavityTapGame {
     if (floatLayer) floatLayer.replaceChildren()
   }
 
+  private showKeyringDone(): void {
+    this.screen = 'result'
+    this.overlay.hidden = false
+    this.overlay.innerHTML = `
+      <div class="panel panel--result">
+        <h2 class="panel__title">보너스 게임 3번 모두 완료! 🎉</h2>
+        <p class="panel__copy">게임은 여기까지!</p>
+        <p class="panel__copy">키링을 다시 태그하면 또 다른 랜덤 한마디가 기다리고 있어요!</p>
+        <button type="button" class="btn" data-action="back">이미지로 돌아가기</button>
+      </div>
+    `
+    const back = this.overlay.querySelector<HTMLButtonElement>('[data-action="back"]')!
+    back.addEventListener('click', () => {
+      window.location.href = keyringReturnUrl()
+    })
+  }
+
   private endRound(): void {
     this.screen = 'result'
     this.clearSweepRuntime()
@@ -1207,7 +1258,37 @@ export class CavityTapGame {
     const scorePromise = submitSheetsScore(score)
 
     this.overlay.hidden = false
-    this.overlay.innerHTML = `
+    if (isFromKeyring() && getKeyringPlays() >= KEYRING_MAX_PLAYS) {
+      this.showKeyringDone()
+    } else if (isFromKeyring()) {
+      const remain = KEYRING_MAX_PLAYS - getKeyringPlays()
+      this.overlay.innerHTML = `
+      <div class="panel panel--result">
+        <p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>
+        <p class="panel__tip panel__tip--holding" data-tip>진짜 입속 세균은<br />꼼꼼한 칫솔질로<br />제거해요!</p>
+        <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
+        <p class="panel__remain" data-remain hidden>도전가능한 횟수: ${remain}회</p>
+      </div>
+    `
+      const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
+      const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
+      const remainEl = this.overlay.querySelector<HTMLElement>('[data-remain]')!
+      retry.addEventListener('click', () => {
+        retry.classList.remove('btn--pulse')
+        logSheetsEvent('retry')
+        this.startRound()
+      })
+      this.clearRetryRevealTimer()
+      this.retryRevealTimer = window.setTimeout(() => {
+        this.retryRevealTimer = null
+        if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
+        tip.classList.remove('panel__tip--holding')
+        retry.hidden = false
+        remainEl.hidden = false
+        retry.classList.add('btn--pulse')
+      }, 5000)
+    } else {
+      this.overlay.innerHTML = `
       <div class="panel panel--result">
         <h2 class="panel__title">🎉 30초 미션 완료!</h2>
         <p class="panel__score">충치균 <span>${score}</span>마리 잡기 성공!</p>
@@ -1221,23 +1302,22 @@ export class CavityTapGame {
         <button type="button" class="btn" data-action="retry" hidden>다시 도전하기</button>
       </div>
     `
-    const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
-    const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
-    retry.addEventListener('click', () => {
-      retry.classList.remove('btn--pulse')
-      logSheetsEvent('retry')
-      this.startRound()
-    })
-
-    // Tip expands into the retry slot for 7s — large type + pulse + black↔red, no button yet.
-    this.clearRetryRevealTimer()
-    this.retryRevealTimer = window.setTimeout(() => {
-      this.retryRevealTimer = null
-      if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
-      tip.classList.remove('panel__tip--holding')
-      retry.hidden = false
-      retry.classList.add('btn--pulse')
-    }, 7000)
+      const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
+      const retry = this.overlay.querySelector<HTMLButtonElement>('[data-action="retry"]')!
+      retry.addEventListener('click', () => {
+        retry.classList.remove('btn--pulse')
+        logSheetsEvent('retry')
+        this.startRound()
+      })
+      this.clearRetryRevealTimer()
+      this.retryRevealTimer = window.setTimeout(() => {
+        this.retryRevealTimer = null
+        if (this.screen !== 'result' || syncGen !== this.resultSyncGen) return
+        tip.classList.remove('panel__tip--holding')
+        retry.hidden = false
+        retry.classList.add('btn--pulse')
+      }, 7000)
+    }
 
     // Yield so the score CORS POST is on the wire before complete contends
     // for LockService. Keepalive/beacon still runs if the tab closes soon after.
