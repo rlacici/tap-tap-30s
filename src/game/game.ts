@@ -1233,12 +1233,13 @@ export class CavityTapGame {
         ${scoreLine}
         <h2 class="panel__title">보너스 게임 3번 모두 완료! 🎉</h2>
         <p class="panel__copy">게임은 여기까지!</p>
-        <p class="panel__copy">키링을 다시 태그하면<br />또 다른 랜덤 한마디가 기다리고 있어요!</p>
-        <button type="button" class="btn" data-action="back">이미지로 돌아가기</button>
+        <p class="panel__copy">키링을 다시 태그하면<br />또 다른 랜덤 한마디가<br />기다리고 있어요!</p>
+        <button type="button" class="btn btn--pulse" data-action="back">이미지로 돌아가기</button>
       </div>
     `
     const back = this.overlay.querySelector<HTMLButtonElement>('[data-action="back"]')!
     back.addEventListener('click', () => {
+      back.classList.remove('btn--pulse')
       window.location.href = keyringReturnUrl()
     })
   }
