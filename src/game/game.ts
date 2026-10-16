@@ -24,6 +24,10 @@ import { ToothbrushController } from './toothbrush'
 
 type Screen = 'start' | 'playing' | 'result'
 
+function isFromKeyring(): boolean {
+  return new URLSearchParams(window.location.search).get('from') === 'keyring'
+}
+
 function randInt(min: number, max: number): number {
   return Math.floor(min + Math.random() * (max - min + 1))
 }
@@ -307,7 +311,34 @@ export class CavityTapGame {
     this.stopSpawner()
     this.hideAllGerms()
     this.overlay.hidden = false
-    this.overlay.innerHTML = `
+    const fromKeyring = isFromKeyring()
+    this.overlay.innerHTML = fromKeyring
+      ? `
+      <div class="panel panel--start">
+        <img
+          class="panel__hero"
+          src="${ASSETS.germHero}"
+          width="320"
+          height="320"
+          alt=""
+          draggable="false"
+          decoding="async"
+          fetchpriority="high"
+        />
+        <p class="panel__eyebrow">미추홀구보건소와 함께하는</p>
+        <h1 class="panel__title">🎁 깜짝 보너스 게임!</h1>
+        <p class="panel__copy">30초 동안 충치균을 얼마나 잡을 수 있을까요?</p>
+        <p class="panel__hint" aria-label="힌트">
+          <span class="panel__hint-label">💡 힌트!</span>
+          반짝이는 칫솔이 나오면<br />톡! 쓸고 지나가며 충치균을 잡아요!
+        </p>
+        <p class="panel__load-status" data-load-status hidden></p>
+        <button type="button" class="btn btn--gated" data-action="start" disabled aria-disabled="true">
+          불러오는 중…
+        </button>
+      </div>
+    `
+      : `
       <div class="panel panel--start">
         <img
           class="panel__hero"
@@ -345,7 +376,7 @@ export class CavityTapGame {
       startBtn.removeAttribute('aria-disabled')
       startBtn.classList.remove('btn--gated')
       startBtn.dataset.action = 'start'
-      startBtn.textContent = '시작하기'
+      startBtn.textContent = fromKeyring ? '🎮 게임 시작하기' : '시작하기'
     }
 
     const showLoadFailure = (): void => {
