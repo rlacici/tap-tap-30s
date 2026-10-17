@@ -599,7 +599,7 @@ export class CavityTapGame {
     if (!alive()) return
     await this.showStartCue('READY!', 2000)
     if (!alive()) return
-    await this.showStartCue('GO!', 700)
+    await this.showStartCue('GO!', 500)
     if (!alive()) return
 
     this.setHudCue(timeChip, false)
