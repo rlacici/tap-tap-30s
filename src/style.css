@@ -710,6 +710,49 @@ button {
   }
 }
 
+.phone-frame.is-arming .stage {
+  pointer-events: none;
+}
+
+.hud__chip.is-cue {
+  animation: hud-cue 0.7s ease-in-out;
+}
+
+@keyframes hud-cue {
+  0%,
+  100% {
+    filter: brightness(1);
+    transform: scale(1);
+  }
+  50% {
+    filter: brightness(1.65);
+    transform: scale(1.12);
+  }
+}
+
+.start-cue {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: min(18cqmin, 18vmin);
+  letter-spacing: 0.04em;
+  line-height: 1;
+  color: #ffffff;
+  text-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.55),
+    0 0 22px rgba(0, 0, 0, 0.45);
+}
+
+.start-cue[hidden] {
+  display: none !important;
+}
+
 /*
  * Toothbrush chance notice — soft translucent white flash +「칫솔 찬스!」.
  * pointer-events: none so germ / brush taps pass through. Does not scale the brush.

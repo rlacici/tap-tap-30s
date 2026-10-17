@@ -154,6 +154,11 @@ export class CavityTapGame {
    * During hold: larger tip type + pulse + black↔red text (CSS). Cleared on startRound / next endRound.
    */
   private retryRevealTimer: number | null = null
+  /** First start on this page shows the HUD cue. Retries only get READY → GO. */
+  private tutorialSeen = false
+  private arming = false
+  private armGen = 0
+  private startCue!: HTMLElement
   private onResize = (): void => {
     layoutMouthBoard(this.mouthScene, this.mouthBoard, this.hud)
     this.fitHudBrand()
@@ -288,6 +293,7 @@ export class CavityTapGame {
           hidden
           aria-hidden="true"
         ></div>
+        <div class="start-cue" data-start-cue hidden aria-hidden="true"></div>
 
         <div
           class="brush-chance-flash"
@@ -310,6 +316,7 @@ export class CavityTapGame {
     this.hudTime = this.root.querySelector('[data-hud="time"]')!
     this.hudScore = this.root.querySelector('[data-hud="score"]')!
     this.endCountdown = this.root.querySelector('[data-end-countdown]')!
+    this.startCue = this.root.querySelector('[data-start-cue]')!
     this.brushChanceFlash = this.root.querySelector('[data-brush-flash]')!
     this.brushChanceBanner = this.root.querySelector('[data-brush-banner]')!
     this.overlay = this.root.querySelector('[data-overlay]')!
@@ -466,7 +473,7 @@ export class CavityTapGame {
       }
       if (!assetsReady) return
       startBtn.classList.remove('btn--pulse')
-      this.startRound()
+      void this.beginRound()
     })
 
     // Prefetch server TOP3 into session/memory so first-play and post-reset
@@ -523,6 +530,76 @@ export class CavityTapGame {
       window.clearTimeout(this.retryRevealTimer)
       this.retryRevealTimer = null
     }
+  }
+
+  private wait(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      window.setTimeout(resolve, ms)
+    })
+  }
+
+  private setHudCue(chip: Element | null, on: boolean): void {
+    chip?.classList.toggle('is-cue', on)
+  }
+
+  private async showStartCue(text: string, ms: number): Promise<void> {
+    this.startCue.textContent = text
+    this.startCue.hidden = false
+    await this.wait(ms)
+    this.startCue.hidden = true
+    this.startCue.textContent = ''
+  }
+
+  /**
+   * First start: flash the time chip, then the score chip, then READY → GO.
+   * Retry: READY → GO only. The 30s clock starts after GO.
+   */
+  private async beginRound(): Promise<void> {
+    if (this.arming || this.screen === 'playing') return
+    this.arming = true
+    const gen = ++this.armGen
+    const withTutorial = !this.tutorialSeen
+    this.tutorialSeen = true
+    const frame = this.root.querySelector('.phone-frame')
+    const alive = (): boolean => gen === this.armGen
+
+    this.clearRetryRevealTimer()
+    this.clearBrushChanceNotice()
+    this.clearEndCountdown()
+    this.hideAllGerms()
+    this.stopSpawner()
+    this.stopTimer(false)
+    this.hudScore.textContent = '0'
+    this.hudTime.textContent = String(GAME.durationSec)
+    this.overlay.hidden = true
+    this.overlay.innerHTML = ''
+    frame?.classList.add('is-arming')
+
+    const timeChip = this.hudTime.closest('.hud__chip')
+    const scoreChip = this.hudScore.closest('.hud__chip')
+
+    if (withTutorial) {
+      this.setHudCue(timeChip, true)
+      await this.wait(700)
+      if (!alive()) return
+      this.setHudCue(timeChip, false)
+      this.setHudCue(scoreChip, true)
+      await this.wait(700)
+      if (!alive()) return
+      this.setHudCue(scoreChip, false)
+    }
+
+    if (!alive()) return
+    await this.showStartCue('READY!', 600)
+    if (!alive()) return
+    await this.showStartCue('GO!', 400)
+    if (!alive()) return
+
+    this.setHudCue(timeChip, false)
+    this.setHudCue(scoreChip, false)
+    frame?.classList.remove('is-arming')
+    this.arming = false
+    this.startRound()
   }
 
   private startRound(): void {
@@ -1307,7 +1384,7 @@ export class CavityTapGame {
       retry.addEventListener('click', () => {
         retry.classList.remove('btn--pulse')
         logSheetsEvent('retry')
-        this.startRound()
+        void this.beginRound()
       })
       endBtn.addEventListener('click', () => {
         window.location.href = keyringReturnUrl()
@@ -1341,7 +1418,7 @@ export class CavityTapGame {
       retry.addEventListener('click', () => {
         retry.classList.remove('btn--pulse')
         logSheetsEvent('retry')
-        this.startRound()
+        void this.beginRound()
       })
       this.clearRetryRevealTimer()
       this.retryRevealTimer = window.setTimeout(() => {
