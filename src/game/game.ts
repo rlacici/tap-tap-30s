@@ -31,28 +31,41 @@ function isFromKeyring(): boolean {
   return new URLSearchParams(window.location.search).get('from') === 'keyring'
 }
 
-function getKeyringPlays(): number {
-  const n = Number(sessionStorage.getItem(KEYRING_PLAYS_KEY) || '0')
+function readStoredCount(storage: Storage, key: string): number | null {
+  const raw = storage.getItem(key)
+  if (raw === null) return null
+  const n = Number(raw)
   return Number.isFinite(n) ? Math.max(0, n) : 0
+}
+
+function getKeyringPlays(): number {
+  const saved = readStoredCount(localStorage, KEYRING_PLAYS_KEY)
+  if (saved !== null) return saved
+  const legacy = readStoredCount(sessionStorage, KEYRING_PLAYS_KEY)
+  if (legacy === null) return 0
+  localStorage.setItem(KEYRING_PLAYS_KEY, String(legacy))
+  return legacy
 }
 
 function bumpKeyringPlays(): number {
   const next = Math.min(KEYRING_MAX_PLAYS, getKeyringPlays() + 1)
-  sessionStorage.setItem(KEYRING_PLAYS_KEY, String(next))
+  localStorage.setItem(KEYRING_PLAYS_KEY, String(next))
   return next
 }
 
 const KEYRING_LAST_SCORE_KEY = 'tap-tap-keyring-last-score'
 
 function setKeyringLastScore(score: number): void {
-  sessionStorage.setItem(KEYRING_LAST_SCORE_KEY, String(score))
+  localStorage.setItem(KEYRING_LAST_SCORE_KEY, String(score))
 }
 
 function getKeyringLastScore(): number | null {
-  const raw = sessionStorage.getItem(KEYRING_LAST_SCORE_KEY)
-  if (raw === null) return null
-  const n = Number(raw)
-  return Number.isFinite(n) ? n : null
+  const saved = readStoredCount(localStorage, KEYRING_LAST_SCORE_KEY)
+  if (saved !== null) return saved
+  const legacy = readStoredCount(sessionStorage, KEYRING_LAST_SCORE_KEY)
+  if (legacy === null) return null
+  localStorage.setItem(KEYRING_LAST_SCORE_KEY, String(legacy))
+  return legacy
 }
 
 function keyringReturnUrl(): string {
