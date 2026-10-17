@@ -544,12 +544,17 @@ export class CavityTapGame {
 
   private async showStartCue(text: string, ms: number): Promise<void> {
     this.startCue.textContent = text
+    this.startCue.classList.remove('is-pop')
     this.startCue.classList.toggle('is-pulse', text === 'READY!')
     this.startCue.hidden = false
     await this.wait(ms)
+    if (text === 'GO!') {
+      this.startCue.classList.add('is-pop')
+      await this.wait(200)
+    }
     this.startCue.hidden = true
     this.startCue.textContent = ''
-    this.startCue.classList.remove('is-pulse')
+    this.startCue.classList.remove('is-pulse', 'is-pop')
   }
 
   /**
