@@ -736,9 +736,17 @@ button {
     transform: translate(0, 0) scale(1);
   }
   12%,
+  36%,
+  60%,
   88% {
-    filter: brightness(1.45);
+    filter: brightness(1.2);
     transform: translate(22cqw, 16cqw) scale(3);
+  }
+  24%,
+  48%,
+  72% {
+    filter: brightness(1.55);
+    transform: translate(22cqw, 16cqw) scale(3.16);
   }
 }
 
@@ -749,9 +757,17 @@ button {
     transform: translate(0, 0) scale(1);
   }
   12%,
+  36%,
+  60%,
   88% {
-    filter: brightness(1.45);
+    filter: brightness(1.2);
     transform: translate(-22cqw, 16cqw) scale(3);
+  }
+  24%,
+  48%,
+  72% {
+    filter: brightness(1.55);
+    transform: translate(-22cqw, 16cqw) scale(3.16);
   }
 }
 
@@ -776,6 +792,22 @@ button {
 
 .start-cue[hidden] {
   display: none !important;
+}
+
+.start-cue.is-pulse {
+  animation: start-cue-pulse 0.7s ease-in-out infinite;
+}
+
+@keyframes start-cue-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  50% {
+    transform: scale(1.08);
+    filter: brightness(1.2);
+  }
 }
 
 /*
