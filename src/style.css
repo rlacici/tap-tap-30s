@@ -735,16 +735,14 @@ button {
     filter: brightness(1);
     transform: translate(0, 0) scale(1);
   }
-  12%,
-  36%,
-  60%,
+  14%,
+  52%,
   88% {
     filter: brightness(1.2);
     transform: translate(22cqw, 16cqw) scale(3);
   }
-  24%,
-  48%,
-  72% {
+  33%,
+  70% {
     filter: brightness(1.55);
     transform: translate(22cqw, 16cqw) scale(3.16);
   }
@@ -756,16 +754,14 @@ button {
     filter: brightness(1);
     transform: translate(0, 0) scale(1);
   }
-  12%,
-  36%,
-  60%,
+  14%,
+  52%,
   88% {
     filter: brightness(1.2);
     transform: translate(-22cqw, 16cqw) scale(3);
   }
-  24%,
-  48%,
-  72% {
+  33%,
+  70% {
     filter: brightness(1.55);
     transform: translate(-22cqw, 16cqw) scale(3.16);
   }
