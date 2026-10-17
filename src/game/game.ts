@@ -580,17 +580,17 @@ export class CavityTapGame {
 
     if (withTutorial) {
       this.setHudCue(timeChip, true)
-      await this.wait(1000)
+      await this.wait(2000)
       if (!alive()) return
       this.setHudCue(timeChip, false)
       this.setHudCue(scoreChip, true)
-      await this.wait(1000)
+      await this.wait(2000)
       if (!alive()) return
       this.setHudCue(scoreChip, false)
     }
 
     if (!alive()) return
-    await this.showStartCue('READY!', 1000)
+    await this.showStartCue('READY!', 2000)
     if (!alive()) return
     await this.showStartCue('GO!', 1000)
     if (!alive()) return

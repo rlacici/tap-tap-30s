@@ -716,31 +716,42 @@ button {
 
 .hud__chip.is-cue {
   position: relative;
-  z-index: 6;
-  animation: hud-cue 1s ease-in-out;
+  z-index: 8;
 }
 
 .hud__time.is-cue {
-  transform-origin: left center;
+  transform-origin: left top;
+  animation: hud-cue-time 2s ease-in-out;
 }
 
 .hud__score.is-cue {
-  transform-origin: right center;
+  transform-origin: right top;
+  animation: hud-cue-score 2s ease-in-out;
 }
 
-@keyframes hud-cue {
-  0% {
+@keyframes hud-cue-time {
+  0%,
+  100% {
     filter: brightness(1);
-    transform: scale(1);
+    transform: translate(0, 0) scale(1);
   }
   12%,
   88% {
     filter: brightness(1.45);
-    transform: scale(3);
+    transform: translate(22cqw, 16cqw) scale(3);
   }
+}
+
+@keyframes hud-cue-score {
+  0%,
   100% {
     filter: brightness(1);
-    transform: scale(1);
+    transform: translate(0, 0) scale(1);
+  }
+  12%,
+  88% {
+    filter: brightness(1.45);
+    transform: translate(-22cqw, 16cqw) scale(3);
   }
 }
 
