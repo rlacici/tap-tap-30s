@@ -1375,7 +1375,7 @@ export class CavityTapGame {
           <button type="button" class="btn" data-action="retry">다시 도전하기</button>
           <button type="button" class="btn btn--end" data-action="end">끝내기</button>
         </div>
-        <p class="panel__remain" data-remain hidden>도전가능한 횟수: ${remain}회</p>
+        <p class="panel__remain" data-remain hidden>남은 도전 횟수: ${remain}회</p>
       </div>
     `
       const tip = this.overlay.querySelector<HTMLElement>('[data-tip]')!
