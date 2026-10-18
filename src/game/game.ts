@@ -121,6 +121,8 @@ export class CavityTapGame {
   /** Direct-tap streak in normal mode. Visual only — never added to score. */
   private combo = 0
   private comboResetTimer: number | null = null
+  /** Combo count kept, but the 2s window waits out the toothbrush sweep. */
+  private comboHeldForSweep = false
   private comboHideTimer: number | null = null
   private comboBanner!: HTMLElement
   private timeLeft: number = GAME.durationSec
@@ -788,6 +790,7 @@ export class CavityTapGame {
     if (this.screen === 'playing' && !this.sweeping) {
       this.startSpawner()
     }
+    this.releaseComboAfterSweep()
   }
 
   /** Plan ~1–2 bonus appearances in the mid-round window (game-time seconds). */
@@ -1058,6 +1061,7 @@ export class CavityTapGame {
     // Pause countdown + stop new germ waves for the sweep only.
     this.stopTimer()
     this.stopSpawner()
+    this.holdComboForSweep()
 
     const targets = this.germs
       .filter((g) => g.isActive)
@@ -1192,6 +1196,7 @@ export class CavityTapGame {
     }
     this.startTimer()
     this.startSpawner()
+    this.releaseComboAfterSweep()
   }
 
   private clearSweepRuntime(): void {
@@ -1309,6 +1314,29 @@ export class CavityTapGame {
   private noteTapCombo(): void {
     if (isFromKeyring() || this.sweeping || this.screen !== 'playing') return
     this.combo += 1
+    this.armComboWindow()
+    if (this.isComboMilestone(this.combo)) this.showComboPop(this.combo)
+  }
+
+  /** Pause a live combo while germs cannot be tapped. A dead combo stays dead. */
+  private holdComboForSweep(): void {
+    if (isFromKeyring() || this.combo <= 0) return
+    if (this.comboResetTimer !== null) {
+      window.clearTimeout(this.comboResetTimer)
+      this.comboResetTimer = null
+    }
+    this.comboHeldForSweep = true
+  }
+
+  /** After the sweep, the same combo gets a fresh 2s window. */
+  private releaseComboAfterSweep(): void {
+    if (!this.comboHeldForSweep) return
+    this.comboHeldForSweep = false
+    if (isFromKeyring() || this.combo <= 0 || this.screen !== 'playing' || this.sweeping) return
+    this.armComboWindow()
+  }
+
+  private armComboWindow(): void {
     if (this.comboResetTimer !== null) {
       window.clearTimeout(this.comboResetTimer)
     }
@@ -1316,7 +1344,6 @@ export class CavityTapGame {
       this.comboResetTimer = null
       this.combo = 0
     }, GAME.comboWindowMs)
-    if (this.isComboMilestone(this.combo)) this.showComboPop(this.combo)
   }
 
   /** 3, 5, then every 5 from 10 upward. */
@@ -1346,6 +1373,7 @@ export class CavityTapGame {
 
   private clearCombo(): void {
     this.combo = 0
+    this.comboHeldForSweep = false
     if (this.comboResetTimer !== null) {
       window.clearTimeout(this.comboResetTimer)
       this.comboResetTimer = null
