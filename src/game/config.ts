@@ -11,6 +11,7 @@ import { TOOTH_ANCHORS, type ToothKind } from './teethLayout'
  * - burstExtraMin/Max   extra germs beyond the first when bursting (total ≤ concurrentGerms)
  * - burstGapMs          delay between germs inside a burst
  * - retreatMs           duration of the miss “쏙” shrink animation
+ * - comboWindowMs       normal-mode tap combo window (visual only, no score)
  *
  * Tap-catch VFX knobs (only on user tap — never on miss/retreat):
  * - squashMs            short press/squash before the burst
@@ -39,6 +40,8 @@ import { TOOTH_ANCHORS, type ToothKind } from './teethLayout'
  */
 export const GAME = {
   durationSec: 30,
+  /** Normal mode only: next direct tap within this window keeps the combo. */
+  comboWindowMs: 2000,
   germSizeVw: 18,
 
   /** Short squash/press on tap-catch. */

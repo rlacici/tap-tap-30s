@@ -118,6 +118,11 @@ export class CavityTapGame {
   private toothbrush!: ToothbrushController
   private occupiedAnchors = new Set<string>()
   private score = 0
+  /** Direct-tap streak in normal mode. Visual only — never added to score. */
+  private combo = 0
+  private comboResetTimer: number | null = null
+  private comboHideTimer: number | null = null
+  private comboBanner!: HTMLElement
   private timeLeft: number = GAME.durationSec
   private elapsedSec = 0
   /** Remaining countdown in ms (wall-clock; paused while hidden or sweeping). */
@@ -307,6 +312,7 @@ export class CavityTapGame {
           aria-hidden="true"
         ></div>
         <div class="start-cue" data-start-cue hidden aria-hidden="true"></div>
+        <p class="combo-pop" data-combo-pop hidden aria-hidden="true"></p>
 
         <div
           class="brush-chance-flash"
@@ -330,6 +336,7 @@ export class CavityTapGame {
     this.hudScore = this.root.querySelector('[data-hud="score"]')!
     this.endCountdown = this.root.querySelector('[data-end-countdown]')!
     this.startCue = this.root.querySelector('[data-start-cue]')!
+    this.comboBanner = this.root.querySelector('[data-combo-pop]')!
     this.brushChanceFlash = this.root.querySelector('[data-brush-flash]')!
     this.brushChanceBanner = this.root.querySelector('[data-brush-banner]')!
     this.overlay = this.root.querySelector('[data-overlay]')!
@@ -631,6 +638,7 @@ export class CavityTapGame {
     // Retry skips the start panel — refresh cache before this round's optimistic.
     this.prefetchTop3Cache()
     this.score = 0
+    this.clearCombo()
     this.timeLeft = GAME.durationSec
     this.elapsedSec = 0
     this.remainingMs = GAME.durationSec * 1000
@@ -1291,6 +1299,65 @@ export class CavityTapGame {
     if (this.screen !== 'playing') return
     this.score += 1
     this.hudScore.textContent = String(this.score)
+    this.noteTapCombo()
+  }
+
+  /**
+   * Normal-mode direct taps only. Sweep clears share handleCatch for score
+   * but must not build a combo. No points or time are added here.
+   */
+  private noteTapCombo(): void {
+    if (isFromKeyring() || this.sweeping || this.screen !== 'playing') return
+    this.combo += 1
+    if (this.comboResetTimer !== null) {
+      window.clearTimeout(this.comboResetTimer)
+    }
+    this.comboResetTimer = window.setTimeout(() => {
+      this.comboResetTimer = null
+      this.combo = 0
+    }, GAME.comboWindowMs)
+    if (this.isComboMilestone(this.combo)) this.showComboPop(this.combo)
+  }
+
+  /** 3, 5, then every 5 from 10 upward. */
+  private isComboMilestone(count: number): boolean {
+    if (count === 3 || count === 5) return true
+    return count >= 10 && count % 5 === 0
+  }
+
+  private showComboPop(count: number): void {
+    const el = this.comboBanner
+    const tier = count >= 10 ? '10' : count >= 5 ? '5' : '3'
+    el.dataset.tier = tier
+    el.textContent = `${count} COMBO!`
+    el.hidden = false
+    el.classList.remove('is-pop')
+    void el.offsetWidth
+    el.classList.add('is-pop')
+    if (this.comboHideTimer !== null) window.clearTimeout(this.comboHideTimer)
+    this.comboHideTimer = window.setTimeout(() => {
+      this.comboHideTimer = null
+      if (!el.classList.contains('is-pop')) return
+      el.classList.remove('is-pop')
+      el.hidden = true
+      el.textContent = ''
+    }, 560)
+  }
+
+  private clearCombo(): void {
+    this.combo = 0
+    if (this.comboResetTimer !== null) {
+      window.clearTimeout(this.comboResetTimer)
+      this.comboResetTimer = null
+    }
+    if (this.comboHideTimer !== null) {
+      window.clearTimeout(this.comboHideTimer)
+      this.comboHideTimer = null
+    }
+    if (!this.comboBanner) return
+    this.comboBanner.classList.remove('is-pop')
+    this.comboBanner.hidden = true
+    this.comboBanner.textContent = ''
   }
 
   /** Free slot after tap-pop or miss-retreat — do not auto-replace. */
@@ -1354,6 +1421,7 @@ export class CavityTapGame {
 
   private endRound(): void {
     this.screen = 'result'
+    this.clearCombo()
     this.clearSweepRuntime()
     this.clearBrushChanceNotice()
     this.endBrushEnsure(false)
