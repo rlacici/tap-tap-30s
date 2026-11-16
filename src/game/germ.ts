@@ -1,5 +1,6 @@
 import { spawnCatchFx, type CatchFxStyle } from './catchFx'
 import { ASSETS, GAME, type SpawnAnchor } from './config'
+import { playGermPop } from './popSound'
 
 export type GermState = 'idle' | 'squashing' | 'popping' | 'retreating' | 'empty'
 
@@ -221,6 +222,7 @@ export class GermController {
       this.dwellTimer = null
     }
 
+    playGermPop()
     this.beginCatch('tap')
   }
 

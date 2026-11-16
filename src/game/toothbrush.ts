@@ -1,4 +1,5 @@
 import { ASSETS, GAME, type SpawnAnchor } from './config'
+import { playToothbrushShine } from './popSound'
 
 export type ToothbrushState = 'idle' | 'retreating' | 'empty'
 
@@ -136,6 +137,7 @@ export class ToothbrushController {
 
     this.clearTimers()
     this.state = 'empty'
+    playToothbrushShine()
     this.el.classList.remove('is-idle')
     this.el.classList.add('is-hidden')
     // Keep anchorId until game releases it in beginToothbrushSweep.

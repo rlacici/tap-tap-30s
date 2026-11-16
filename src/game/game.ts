@@ -20,6 +20,7 @@ import {
   submitSheetsScore,
   type Top3Scores,
 } from './sheetsLog'
+import { setBedMusicPaused, startBedMusic, stopBedMusic } from './popSound'
 import { ToothbrushController } from './toothbrush'
 
 type Screen = 'start' | 'playing' | 'result'
@@ -586,6 +587,7 @@ export class CavityTapGame {
   private async beginRound(): Promise<void> {
     if (this.arming || this.screen === 'playing') return
     this.arming = true
+    startBedMusic()
     const gen = ++this.armGen
     const withTutorial = !this.tutorialSeen
     this.tutorialSeen = true
@@ -610,19 +612,34 @@ export class CavityTapGame {
     if (withTutorial) {
       this.setHudCue(timeChip, true)
       await this.wait(2000)
-      if (!alive()) return
+      if (!alive()) {
+        stopBedMusic()
+        return
+      }
       this.setHudCue(timeChip, false)
       this.setHudCue(scoreChip, true)
       await this.wait(2000)
-      if (!alive()) return
+      if (!alive()) {
+        stopBedMusic()
+        return
+      }
       this.setHudCue(scoreChip, false)
     }
 
-    if (!alive()) return
+    if (!alive()) {
+      stopBedMusic()
+      return
+    }
     await this.showStartCue('READY!', 2000)
-    if (!alive()) return
+    if (!alive()) {
+      stopBedMusic()
+      return
+    }
     await this.showStartCue('GO!', 300)
-    if (!alive()) return
+    if (!alive()) {
+      stopBedMusic()
+      return
+    }
 
     this.setHudCue(timeChip, false)
     this.setHudCue(scoreChip, false)
@@ -773,6 +790,7 @@ export class CavityTapGame {
   private handleVisibilityChange(): void {
     if (this.screen !== 'playing') return
     if (document.hidden) {
+      setBedMusicPaused(true)
       if (this.backgroundPaused) return
       // Flush remaining time before pausing the clock.
       this.flushTimerClock()
@@ -783,6 +801,7 @@ export class CavityTapGame {
       return
     }
     if (!this.backgroundPaused) return
+    setBedMusicPaused(false)
     this.backgroundPaused = false
     if (this.sweeping) return
     this.lastTimerNow = performance.now()
@@ -1449,6 +1468,7 @@ export class CavityTapGame {
 
   private endRound(): void {
     this.screen = 'result'
+    stopBedMusic()
     this.clearCombo()
     this.clearSweepRuntime()
     this.clearBrushChanceNotice()
