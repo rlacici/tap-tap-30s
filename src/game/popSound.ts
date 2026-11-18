@@ -3,7 +3,7 @@
  * Keyring visits stay silent. Germ pops are direct taps only.
  * The toothbrush shine plays once when that brush is tapped.
  * A quiet loop plays during a direct-page round and stops when the round ends.
- * Direct-page sound plays on a computer only. Phones and tablets stay silent.
+ * Phones and computers hear the same direct-page sounds. Keyring visits stay silent.
  */
 let ctx: AudioContext | null = null
 
@@ -11,19 +11,8 @@ function isFromKeyring(): boolean {
   return new URLSearchParams(window.location.search).get('from') === 'keyring'
 }
 
-function isHandheld(): boolean {
-  const nav = navigator as Navigator & { userAgentData?: { mobile?: boolean } }
-  if (nav.userAgentData?.mobile) return true
-  const ua = nav.userAgent
-  if (/iPhone|iPod|iPad|Android|Mobile|webOS|BlackBerry|IEMobile|Opera Mini/i.test(ua)) {
-    return true
-  }
-  return /Macintosh/i.test(ua) && nav.maxTouchPoints > 1
-}
-
 function audioContext(): AudioContext | null {
   if (isFromKeyring()) return null
-  if (isHandheld()) return null
   const AudioCtx = window.AudioContext
   if (!AudioCtx) return null
   if (!ctx || ctx.state === 'closed') ctx = new AudioCtx()
