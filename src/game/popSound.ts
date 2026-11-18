@@ -4,6 +4,7 @@
  * The toothbrush shine plays once when that brush is tapped.
  * A quiet loop plays during a direct-page round and stops when the round ends.
  * Phones and computers hear the same direct-page sounds. Keyring visits stay silent.
+ * READY and GO are spoken when those cues appear. Keyring stays silent.
  */
 let ctx: AudioContext | null = null
 
@@ -137,7 +138,7 @@ export function playToothbrushShine(): void {
   }
 }
 
-const BED_LEVEL = 0.08
+const BED_LEVEL = 0.16
 const BED_BEAT = 0.47
 
 let musicOn = false
@@ -188,9 +189,47 @@ function scheduleBed(audio: AudioContext): void {
   }
 }
 
+function canSpeak(): boolean {
+  return !isFromKeyring() && typeof window.speechSynthesis !== 'undefined'
+}
+
+function englishVoice(): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices()
+  return (
+    voices.find((voice) => voice.lang.toLowerCase().startsWith('en-us')) ??
+    voices.find((voice) => voice.lang.toLowerCase().startsWith('en')) ??
+    null
+  )
+}
+
+/** Spoken during the direct-page READY / GO cues. Keyring stays silent. */
+export function speakStartCue(text: string): void {
+  if (!canSpeak()) return
+  const said = text === 'READY!' ? 'Ready' : text === 'GO!' ? 'Go' : ''
+  if (!said) return
+  const synth = window.speechSynthesis
+  synth.cancel()
+  const utterance = new SpeechSynthesisUtterance(said)
+  utterance.lang = 'en-US'
+  utterance.rate = 1
+  utterance.volume = 1
+  const voice = englishVoice()
+  if (voice) utterance.voice = voice
+  synth.speak(utterance)
+}
+
+function primeSpeech(): void {
+  if (!canSpeak()) return
+  const utterance = new SpeechSynthesisUtterance(' ')
+  utterance.volume = 0
+  utterance.lang = 'en-US'
+  window.speechSynthesis.speak(utterance)
+}
+
 export function startBedMusic(): void {
   const audio = audioContext()
   if (!audio || musicOn) return
+  primeSpeech()
   musicOn = true
   musicBeat = 0
   musicOrigin = audio.currentTime + 0.06

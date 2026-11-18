@@ -20,7 +20,7 @@ import {
   submitSheetsScore,
   type Top3Scores,
 } from './sheetsLog'
-import { setBedMusicPaused, startBedMusic, stopBedMusic } from './popSound'
+import { setBedMusicPaused, speakStartCue, startBedMusic, stopBedMusic } from './popSound'
 import { ToothbrushController } from './toothbrush'
 
 type Screen = 'start' | 'playing' | 'result'
@@ -570,6 +570,7 @@ export class CavityTapGame {
     this.startCue.classList.remove('is-pop')
     this.startCue.classList.toggle('is-pulse', text === 'READY!')
     this.startCue.hidden = false
+    speakStartCue(text)
     await this.wait(ms)
     if (text === 'GO!') {
       this.startCue.classList.add('is-pop')
