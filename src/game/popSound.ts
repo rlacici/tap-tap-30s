@@ -138,7 +138,7 @@ export function playToothbrushShine(): void {
   }
 }
 
-const BED_LEVEL = 0.16
+const BED_LEVEL = 0.32
 const BED_BEAT = 0.47
 
 let musicOn = false
